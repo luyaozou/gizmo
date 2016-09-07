@@ -91,7 +91,7 @@ def load_single_file(file_name):
             return None
     else:
         try:
-            delm, hd, eof = analyze_txt_fmt(file_name)
+            delm, hd, eof = txt_fmt(file_name)
             if eof or isinstance(delm, type(None)):
                 print(err_msg_str(file_name, 2))
             else:
