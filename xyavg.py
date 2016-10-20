@@ -1,6 +1,6 @@
 #! encoding = utf-8
-''' This script performs spectral average. It takes xy files with identical
-x data but multiple shots of y data, and output the y_average
+''' This script performs spectral average. It average each single data points
+in a set of data files with same dimensions.
 '''
 
 import numpy as np
