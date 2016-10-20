@@ -92,7 +92,8 @@ def scan_num(hd_line_n, num_str):
             except ValueError:
                 print('Sequence format error.')
                 exit()
-        return list(hd_line_n[x] for x in hd_extract_n)
+        # remember python starts index at 0
+        return list(hd_line_n[x-1] for x in hd_extract_n)
     else:
         return hd_line_n       # extract all scans
 
@@ -134,12 +135,12 @@ def parse(file_name, num_str, hd_bool):
 
         # control the header line in the output file
         if hd_bool:
-            hd = lines[n]
+            hd = lines[n].strip()
         else:
             hd = ''
 
         np.savetxt(outname, np.column_stack((freq, data)), delimiter=',',
-                   header=hd, fmt='%.3f', comments='#')
+                   header=hd, fmt='%.3f')
         print('{:s} saved'.format(outname))
 
     return None
