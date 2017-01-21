@@ -4,7 +4,6 @@
 This script transforms the SMAP assignment output format into XIAM input format
 '''
 
-import re
 import argparse
 
 
@@ -14,7 +13,7 @@ def arg():
     parser = argparse.ArgumentParser(description=__doc__,
                                     epilog='--- Luyao Zou, Jan 2017 ---')
     parser.add_argument('i', nargs=1, help='Input: SMAP assignment output file')
-    parser.add_argument('-o', nargs=1, help='Output: XIAM input file')
+    parser.add_argument('-out', nargs=1, help='Output: XIAM input file')
     parser.add_argument('-a', action='store_true',
                         help='Append to existing XIAM input')
 
@@ -31,7 +30,7 @@ def convert(f, g):
         line2 = f.readline().strip().split()
         line1.append(line2[0])
         line1.append(line2[1])
-        g.write('{:2s}{:>3s}{:>3s}{:>6s}{:>3s}{:>3s}    S {:1s}  =  {:>11s} MHz   Err  {:s}\n'.format(*line1))
+        g.write('{:>2s}{:>3s}{:>3s}{:>6s}{:>3s}{:>3s}    S {:1s}  =  {:>11s} MHz      Err   {:s}\n'.format(*line1))
         return False
     except IndexError:
         return True
@@ -42,10 +41,10 @@ if __name__ == "__main__":
     input_args = arg()
     f_in = input_args.i[0]
 
-    if input_args.o:
-        f_out = input_args.o[0]
+    if input_args.out:
+        f_out = input_args.out[0]
     else:
-        f_out = re.sub('\.txt$', '.xi', f_in)
+        f_out = f_in + 'xi'
 
     f = open(f_in, 'r')
     if input_args.a:

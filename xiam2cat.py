@@ -20,7 +20,7 @@ OTHER_SLICE = ((32, 44),    # frequency
 
 # JPL string format
 #          FREQ     UNCERT  LOGINT  DOF   ELOW     GUP   TAGS   QNUP   QNLOW
-JPLFMT = '{:>13.4f}{:>8.4f}{:-8.4f}{:>2d}{:>10.4f}{:>3d}{:>11s}{:<12s}{:>s}\n'
+JPLFMT = '{:>13.4f}{:>8.4f}{:-8.4f}{:>2d}{:>10.4f}{:>3d}{:>11s}{:<8s}{:>s}\n'
 
 
 def arg():
@@ -28,8 +28,8 @@ def arg():
 
     parser = argparse.ArgumentParser(description=__doc__,
                                     epilog='--- Luyao Zou, Aug 2016 ---')
-    parser.add_argument('i', nargs=1, help='Input: XIAM output file')
-    parser.add_argument('-o', nargs=1, help='Output: JPL catalog file')
+    parser.add_argument('xo', nargs=1, help='Input: XIAM output prediction file')
+    parser.add_argument('-out', nargs=1, help='Output: JPL catalog file')
 
     return parser.parse_args()
 
@@ -52,14 +52,17 @@ def xiam_parse(fin, fout):
         else:
             qn_tuple, freq_int_tuple = xiam_line_parse(line)
             # seprate QNUP and QNLOW
-            qnup = ('{:>2}'*4).format(*(qn_tuple[0:3] + tuple(qn_tuple[-1])))
+            qnup = ('{:>2}'*3).format(*(qn_tuple[0:3]))
             qnlow = ('{:>2}'*4).format(*(qn_tuple[3:6] + tuple(qn_tuple[-1])))
             # convert freq from GHz to MHz
             freq = freq_int_tuple[0] * 1e3
-            logint = math.log10(freq_int_tuple[1]) - 7
+            try:
+                logint = math.log10(freq_int_tuple[1]) + 3
+            except ValueError:
+                logint = -9
             gup = int(freq_int_tuple[2])
             # output JPL format
-            f2h.write(JPLFMT.format(freq, 0, logint, 3, 1, gup, '00000', qnup, qnlow))
+            f2h.write(JPLFMT.format(freq, 0, logint, 3, 1, gup, '60006', qnup, qnlow))
 
     f1h.close()
     f2h.close()
@@ -102,11 +105,11 @@ def xiam_line_parse(line):
 if __name__ == "__main__":
 
     input_args = arg()
-    fin = input_args.i[0]
+    fin = input_args.xo[0]
 
-    if input_args.o:
-        fout = input_args.o[0]
+    if input_args.out:
+        fout = input_args.out[0]
     else:
-        fout = re.sub('\.xo$', '.cat', fin)
+        fout = fin + '.cat'
 
     xiam_parse(fin, fout)
