@@ -33,8 +33,6 @@ class MainWindow(QtWidgets.QMainWindow):
         # Set window layout
         self.mainLayout = QtWidgets.QHBoxLayout()
         self.mainLayout.setSpacing(6)
-        #self.mainLayout.addWidget(self.taskEditor)
-        #self.mainLayout.addWidget(self.banEditor)
         self.mainLayout.addWidget(self.canvasBox)
         self.mainLayout.addWidget(self.parBox)
 
@@ -134,11 +132,15 @@ class MainWindow(QtWidgets.QMainWindow):
             self.infoBox.refresh()
             # plot data on tds canvas
             self.tdsCurve.setData(self.tdsData.tdsSpec)
-            # update lower & upper limits for the fft window
-            self.fftBox.setInitInput()
-            # enable "ok" button
+            # enable buttons and panels
+            self.fftBox.setDisabled(False)
+            self.filterBox.setDisabled(False)
             self.calcBtn.setDisabled(False)
             self.saveBtn.setDisabled(False)
+            # update lower & upper limits for the fft window
+            self.fftBox.setInitInput()
+            # initiate one fft plot
+            self.calc()
         else:
             pass
 
@@ -148,7 +150,11 @@ class MainWindow(QtWidgets.QMainWindow):
         # Select fft data range
         i_min = self.fftBox.fftMin()
         i_max = self.fftBox.fftMax()
-        y = self.tdsData.tdsSpec[i_min:i_max,1]
+        # check the validity of i_min and i_max
+        if i_min >= 0 and i_max < self.tdsData.acqN and i_min < i_max:
+            y = self.tdsData.tdsSpec[i_min:i_max, 1]
+        else:   # invalid i_min & i_max will not take any affect
+            y = self.tdsData.tdsSpec[:, 1]
         # apply window function
         wf = self.filterBox.get_wf(len(y))
         # fft
@@ -282,6 +288,7 @@ class FFTBox(QtGui.QGroupBox):
 
         self.setTitle('FFT Setting')
         self.setAlignment(QtCore.Qt.AlignLeft)
+        self.setDisabled(True)  # disable the box unless tds is loaded
 
         self.fftMinInput = QtWidgets.QLineEdit()
         self.fftMaxInput = QtWidgets.QLineEdit()
@@ -306,34 +313,23 @@ class FFTBox(QtGui.QGroupBox):
         self.setLayout(thisLayout)
 
     def _refresh_min(self):
-        ''' Update lower limit for the input validator
-            Refresh time convertion
-        '''
+        ''' Refresh time convertion '''
 
         text_min = self.fftMin()
-        data_max = self.parent.tdsData.acqN
-        # reset fftMaxInput validator
-        self.fftMaxInput.setValidator(QtGui.QIntValidator(text_min, data_max))
-        # reset fftMinTime
         t_min = text_min / self.parent.tdsData.adcCLK
         self.fftMinTime.setText(pg.siFormat(t_min, precision=4, suffix='s'))
 
     def _refresh_max(self):
-        ''' Update upper limit for the input validator
-            Refresh time convertion
-        '''
+        ''' Refresh time convertion '''
 
         text_max = self.fftMax()
-        # reset fftMinInput validator
-        self.fftMinInput.setValidator(QtGui.QIntValidator(0, text_max))
-        # reset fftMaxTime
         t_max = text_max / self.parent.tdsData.adcCLK
         self.fftMaxTime.setText(pg.siFormat(t_max, precision=4, suffix='s'))
 
     def setInitInput(self):
         ''' Set initial fft window input from tds data '''
 
-        data_max = self.parent.tdsData.acqN - 1 # for index
+        data_max = self.parent.tdsData.acqN
         t_max = self.parent.tdsData.acqT
         self.fftMinInput.setText('0')
         self.fftMaxInput.setText(str(data_max))
@@ -348,7 +344,7 @@ class FFTBox(QtGui.QGroupBox):
         if self.fftMinInput.text():
             return int(self.fftMinInput.text())
         else:
-            return 1
+            return 0
 
     def fftMax(self):
         ''' Return the fft max value (int) '''
@@ -356,7 +352,7 @@ class FFTBox(QtGui.QGroupBox):
         if self.fftMaxInput.text():
             return int(self.fftMaxInput.text())
         else:
-            return 2
+            return 0
 
 
 class FilterBox(QtGui.QGroupBox):
@@ -370,6 +366,7 @@ class FilterBox(QtGui.QGroupBox):
 
         self.setTitle('Filter')
         self.setAlignment(QtCore.Qt.AlignLeft)
+        self.setDisabled(True)  # disable the box unless tds is loaded
 
         self.filterChoose = QtWidgets.QComboBox()
         self.filterChoose.addItems(['None',
@@ -411,6 +408,7 @@ class TDSData():
         '''
             Initiate the class
             Class attributes:
+                self.isData: bool     data loading status
                 self.minFreq: float   start frequency f_min (MHz)
                 self.imFreq: float    intermediate frequency f_im (MHz)
                 self.spanFreq: float  frequency span f_max-f_min (MHz)
@@ -424,6 +422,7 @@ class TDSData():
                 self.tdsSpec: n by 2 np.array   spectrum (xy) unit(s,V)
         '''
 
+        self.isData = False
         self.minFreq = 0
         self.spanFreq = 0
         self.imFreq = 0
@@ -466,12 +465,15 @@ class TDSData():
                 y = np.loadtxt(filename, skiprows=1)
                 # The last data point is 0.
                 # It is a fake thing and needs to be chopped off
-                x = np.arange(self.acqN) / self.adcCLK
-                self.tdsSpec = np.column_stack((x, y[:-1]))
+                x = np.arange(self.acqN + 1) / self.adcCLK
+                self.tdsSpec = np.column_stack((x, y))
+                self.isData = True
                 return True
             except:
+                self.isData = False
                 return False
         else:
+            self.isData = False
             return False
 
 
