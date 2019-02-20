@@ -91,7 +91,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.fftBox = FFTBox(self)      # for fft window & other settings
         self.filterBox = FilterBox(self)    # for filter settings
         self.calcBtn = QtWidgets.QPushButton('Calc')
-        self.calcBtn.clicked.connect(self._calc)
+        self.calcBtn.clicked.connect(self.calc)
         self.saveBtn = QtWidgets.QPushButton('Save')
         self.saveBtn.clicked.connect(self._save)
         self.batchBtn = QtWidgets.QPushButton('Batch')
@@ -142,15 +142,17 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             pass
 
-    def _calc(self):
-        ''' Calculate fft '''
+    def calc(self, wfname='None'):
+        ''' Calculate fft with selected window function '''
 
-        # Chop y according to fft setting.
+        # Select fft data range
         i_min = self.fftBox.fftMin()
         i_max = self.fftBox.fftMax()
         y = self.tdsData.tdsSpec[i_min:i_max,1]
+        # apply window function
+        wf = self.filterBox.get_wf(len(y))
         # fft
-        fft_y = np.fft.rfft(y)
+        fft_y = np.fft.rfft(y * wf)
         # calculate corresponding frequency
         f = np.fft.rfftfreq(len(y)) * self.tdsData.adcCLK
 
@@ -291,7 +293,7 @@ class FFTBox(QtGui.QGroupBox):
         self.limitFreqCheck.stateChanged.connect(self.parent.fdsPlot)
 
         thisLayout = QtWidgets.QGridLayout()
-        thisLayout.addWidget(QtWidgets.QLabel('FFT Window'), 0, 0)
+        thisLayout.addWidget(QtWidgets.QLabel('FFT Range'), 0, 0)
         thisLayout.addWidget(QtWidgets.QLabel('Point'), 0, 1)
         thisLayout.addWidget(QtWidgets.QLabel('Time'), 0, 2)
         thisLayout.addWidget(QtWidgets.QLabel('Start'), 1, 0)
@@ -370,12 +372,34 @@ class FilterBox(QtGui.QGroupBox):
         self.setAlignment(QtCore.Qt.AlignLeft)
 
         self.filterChoose = QtWidgets.QComboBox()
-        self.filterChoose.addItems(['Test filter1', 'Test filter2'])
-
+        self.filterChoose.addItems(['None',
+                                    'Bartlett',
+                                    'Blackman',
+                                    'Hamming',
+                                    'Hanning'])
+        self.filterChoose.currentTextChanged.connect(self.parent.calc)
         thisLayout = QtWidgets.QGridLayout()
         thisLayout.addWidget(QtWidgets.QLabel('Filter Type'), 0, 0)
         thisLayout.addWidget(self.filterChoose, 0, 1)
         self.setLayout(thisLayout)
+
+    def get_wf(self, n):
+        ''' Generate window function '''
+
+        w = self.filterChoose.currentText()
+
+        if w == 'None':
+            return np.ones(n)
+        elif w == 'Bartlett':
+            return np.bartlett(n)
+        elif w == 'Blackman':
+            return np.blackman(n)
+        elif w == 'Hamming':
+            return np.hamming(n)
+        elif w == 'Hanning':
+            return np.hanning(n)
+        else:
+            return np.ones(n)
 
 
 class TDSData():
