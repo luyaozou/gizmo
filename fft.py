@@ -211,18 +211,14 @@ class MainWindow(QtWidgets.QMainWindow):
         wf = self.filterBox.getWinF(self.tdsData.acqN + 1)
         y = self.tdsData.tdsSpec[:, 1] * wf
 
-        # Select fft data range
-        i_min = self.fftBox.fftMin()
-        i_max = self.fftBox.fftMax()
         # check the validity of i_min and i_max
-        if i_min >= 0 and i_min < i_max:
+        bool, i_min, i_max = check_fft_range(self.fftBox.fftMin(),
+            self.fftBox.fftMax(), self.tdsData.acqN)
+        if bool:
             # restore normal text color
             self.fftBox.fftMinInput.setStyleSheet('color: black')
             self.fftBox.fftMaxInput.setStyleSheet('color: black')
-            if i_max < self.tdsData.acqN:
-                y = y[i_min:i_max+1]
-            else:
-                y = y[i_min:]
+            y = y[i_min:i_max+1]    # account for the python way of indexing
         else:   # invalid i_min & i_max will not take any affect
             # set warning text color
             self.fftBox.fftMinInput.setStyleSheet('color: #D63333')
@@ -301,10 +297,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.tdsData.acqN)
         # fft info
         hd += 'FFT start | stop | zero-padding \n'
+        _, i_min, i_max = check_fft_range(self.fftBox.fftMin(),
+            self.fftBox.fftMax(), self.tdsData.acqN)
+        # if i_max > acqN, record acqN in the header
+        # because this is what actually happens
         hd += '{:9d} | {:4d} | {:12d} \n'.format(
-                self.fftBox.fftMin(),
-                self.fftBox.fftMax(),
-                self.fftBox.zeroPadding())
+                i_min, min(i_max, self.tdsData.acqN), self.fftBox.zeroPadding())
         # filter info
         w = self.filterBox.filterChoose.currentText()
         hd += 'Window type: {:s}\n'.format(w)
@@ -418,6 +416,8 @@ class FFTBox(QtGui.QGroupBox):
         self.fftMaxInput = QtWidgets.QLineEdit()
         self.fftMinInput.textChanged.connect(self._refresh_min)
         self.fftMaxInput.textChanged.connect(self._refresh_max)
+        self.fftMinInput.editingFinished.connect(self.parent.calc)
+        self.fftMaxInput.editingFinished.connect(self.parent.calc)
         self.fftMinTime = QtWidgets.QLabel()
         self.fftMaxTime = QtWidgets.QLabel()
         self.limitFreqCheck = QtWidgets.QCheckBox('Restrict spectrum to chirp frequency')
@@ -786,6 +786,26 @@ class ABSData():
         # get index
         idx = np.logical_and(spec[:, 0]>=fmin, spec[:, 0]<=fmax)
         return spec[idx, :]
+
+
+def check_fft_range(i_min, i_max, n):
+    ''' check the validity of i_min and i_max for FFT range
+    Arguments:
+        i_min: input fft_min (int)
+        i_max: input fft_max (int)
+        n: max data points   (int)
+    Returns:
+        bool: valid / invalid
+        i_min: adjusted i_min
+        i_max: adjusted i_max
+    '''
+
+    if i_min >= 0 and i_min < i_max:
+        # both values are valid.
+        # if i_max > n, numpy will automatically truncate to the end
+        return True, i_min, i_max
+    else:   # invalid, set to full range
+        return False, 0, n
 
 
 if __name__ == '__main__':
