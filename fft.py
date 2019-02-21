@@ -479,8 +479,13 @@ class FFTBox(QtGui.QGroupBox):
         self.fftMaxInput.setText(str(data_max))
         self.fftMinTime.setText(pg.siFormat(0, precision=4, suffix='s'))
         self.fftMaxTime.setText(pg.siFormat(t_max, precision=4, suffix='s'))
-        self.fftMinInput.setValidator(QtGui.QIntValidator(0, data_max))
-        self.fftMaxInput.setValidator(QtGui.QIntValidator(0, data_max))
+        # No longer need to specify max for the validator because the input
+        # validity is accounted by check_fft_range()
+        # This will allow real-time refresh even when input is invalid
+        val = QtGui.QIntValidator()
+        val.setBottom(0)
+        self.fftMinInput.setValidator(val)
+        self.fftMaxInput.setValidator(val)
 
     def zeroPadding(self):
         ''' Return the zero-padding coefficient '''
