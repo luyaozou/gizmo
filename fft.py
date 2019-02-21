@@ -8,6 +8,7 @@ import numpy as np
 from PyQt5 import QtWidgets, QtGui, QtCore
 import pyqtgraph as pg
 
+DEFAULT_DIR = '/home/luyao/Documents/Data'
 ABS_RANGE = 100 # maximum absorption freq range +/- full FFT freq range (MHz)
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -163,7 +164,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # open file dialog
         filename, _ = QtWidgets.QFileDialog.getOpenFileName(self,
-                'Open Data File', '/home/luyao/Documents/Data', 'Time domain spectrum (*.tdf)')
+                'Open Data File', self.tdsData.tdsFileDir, 'Time domain spectrum (*.tdf)')
         # load data file
         status = self.tdsData.load_file(filename)
         if status:  # sucessfully load file
@@ -269,11 +270,14 @@ class MainWindow(QtWidgets.QMainWindow):
             # prepare header
             hd = self._getHeader()
 
+            # by default, save file to the same directory of the tds file
             filename, _ = QtWidgets.QFileDialog.getSaveFileName(self,
-                    'Save Spectrum', '/home/luyao/Documents/Data', 'Frequency domain spectrum (*.txt)')
-
-            np.savetxt(filename, spec, delimiter='\t',
-                       fmt='%.4f', header=hd)
+                    'Save Spectrum', self.tdsData.tdsFileDir, 'Frequency domain spectrum (*)')
+            if filename:
+                np.savetxt(filename, spec, delimiter='\t',
+                           fmt='%.4f', header=hd)
+            else:
+                pass
         else:
             d = QtWidgets.QMessageBox(QtGui.QMessageBox.Warning, 'No time domain data', 'Please analyze the data before saving.')
             d.exec_()
@@ -340,6 +344,8 @@ class InfoBox(QtGui.QGroupBox):
         self.setTitle('Scan Information')
         self.setAlignment(QtCore.Qt.AlignLeft)
 
+        self.filenamLabel = QtWidgets.QLabel()
+        self.filenamLabel.setStyleSheet('color: #0b4495; font: bold; font-size: 14px')
         self.minFreqLabel = QtWidgets.QLabel()
         self.maxFreqLabel = QtWidgets.QLabel()
         self.detFreqLabel = QtWidgets.QLabel()
@@ -352,26 +358,27 @@ class InfoBox(QtGui.QGroupBox):
         self.repRateLabel = QtWidgets.QLabel()
 
         thisLayout = QtWidgets.QGridLayout()
-        thisLayout.addWidget(QtWidgets.QLabel('Frequency MIN: '), 0, 0)
-        thisLayout.addWidget(QtWidgets.QLabel('Frequency MAX: '), 1, 0)
-        thisLayout.addWidget(QtWidgets.QLabel('Detection Freq: '), 2, 0)
-        thisLayout.addWidget(QtWidgets.QLabel('Chirp Range: '), 3, 0)
-        thisLayout.addWidget(QtWidgets.QLabel('Intermediate Freq: '), 4, 0)
-        thisLayout.addWidget(QtWidgets.QLabel('ADC Clock: '), 5, 0)
-        thisLayout.addWidget(QtWidgets.QLabel('Pulse Length: '), 6, 0)
-        thisLayout.addWidget(QtWidgets.QLabel('Acq Number: '), 7, 0)
-        thisLayout.addWidget(QtWidgets.QLabel('Acq Time: '), 8, 0)
-        thisLayout.addWidget(QtWidgets.QLabel('Rep Rate: '), 9, 0)
-        thisLayout.addWidget(self.minFreqLabel, 0, 1)
-        thisLayout.addWidget(self.maxFreqLabel, 1, 1)
-        thisLayout.addWidget(self.detFreqLabel, 2, 1)
-        thisLayout.addWidget(self.spanFreqLabel, 3, 1)
-        thisLayout.addWidget(self.imFreqLabel, 4, 1)
-        thisLayout.addWidget(self.adcCLKLabel, 5, 1)
-        thisLayout.addWidget(self.pulseLenLabel, 6, 1)
-        thisLayout.addWidget(self.acqNLabel, 7, 1)
-        thisLayout.addWidget(self.acqTLabel, 8, 1)
-        thisLayout.addWidget(self.repRateLabel, 9, 1)
+        thisLayout.addWidget(self.filenamLabel, 0, 0, 1, 2)
+        thisLayout.addWidget(QtWidgets.QLabel('Frequency MIN: '), 1, 0)
+        thisLayout.addWidget(QtWidgets.QLabel('Frequency MAX: '), 2, 0)
+        thisLayout.addWidget(QtWidgets.QLabel('Detection Freq: '), 3, 0)
+        thisLayout.addWidget(QtWidgets.QLabel('Chirp Range: '), 4, 0)
+        thisLayout.addWidget(QtWidgets.QLabel('Intermediate Freq: '), 5, 0)
+        thisLayout.addWidget(QtWidgets.QLabel('ADC Clock: '), 6, 0)
+        thisLayout.addWidget(QtWidgets.QLabel('Pulse Length: '), 7, 0)
+        thisLayout.addWidget(QtWidgets.QLabel('Acq Number: '), 8, 0)
+        thisLayout.addWidget(QtWidgets.QLabel('Acq Time: '), 9, 0)
+        thisLayout.addWidget(QtWidgets.QLabel('Rep Rate: '), 10, 0)
+        thisLayout.addWidget(self.minFreqLabel, 1, 1)
+        thisLayout.addWidget(self.maxFreqLabel, 2, 1)
+        thisLayout.addWidget(self.detFreqLabel, 3, 1)
+        thisLayout.addWidget(self.spanFreqLabel, 4, 1)
+        thisLayout.addWidget(self.imFreqLabel, 5, 1)
+        thisLayout.addWidget(self.adcCLKLabel, 6, 1)
+        thisLayout.addWidget(self.pulseLenLabel, 7, 1)
+        thisLayout.addWidget(self.acqNLabel, 8, 1)
+        thisLayout.addWidget(self.acqTLabel, 9, 1)
+        thisLayout.addWidget(self.repRateLabel, 10, 1)
         self.setLayout(thisLayout)
 
 
@@ -381,6 +388,7 @@ class InfoBox(QtGui.QGroupBox):
             Other frequencies (clock, pulse, etc.) are in SI units and use pg.siFormat() to format.
         '''
 
+        self.filenamLabel.setText(self.parent.tdsData.tdsFileName)
         self.minFreqLabel.setText('{:.2f} MHz'.format(self.parent.tdsData.minFreq))
         self.maxFreqLabel.setText('{:.2f} MHz'.format(self.parent.tdsData.maxFreq))
         self.detFreqLabel.setText('{:.2f} MHz'.format(self.parent.tdsData.detFreq))
@@ -639,7 +647,9 @@ class TDSData():
         '''
             Initiate the class
             Class attributes:
-                self.isData: bool     data loading status
+                self.isData: bool     data loading status (only needed for the 1st set of data to load)
+                self.tdsFileName: str data file name
+                self.tdsFileDir: str  data file directory
                 self.minFreq: float   start frequency f_min (MHz)
                 self.imFreq: float    intermediate frequency f_im (MHz)
                 self.spanFreq: float  frequency span f_max-f_min (MHz)
@@ -654,6 +664,8 @@ class TDSData():
         '''
 
         self.isData = False
+        self.tdsFileDir = DEFAULT_DIR
+        self.tdsFileName = ''
         self.minFreq = 0
         self.spanFreq = 0
         self.imFreq = 0
@@ -680,6 +692,9 @@ class TDSData():
                 # Get header
                 with open(filename, 'r') as f:
                     header = f.readline()
+                # Load spectrum
+                y = np.loadtxt(filename, skiprows=1)
+                # If both commands succeeded, process everyting
                 hd_array = header.split('|')
                 # Write header info to class attributes
                 self.minFreq = float(hd_array[0])
@@ -692,18 +707,18 @@ class TDSData():
                 self.acqN = int(hd_array[5])
                 self.acqT = self.acqN / self.adcCLK
                 self.repRate = float(hd_array[6])
-                # Load spectrum
-                y = np.loadtxt(filename, skiprows=1)
                 # The last data point is 0 but leave it (for fft purpose)
                 x = np.arange(self.acqN + 1) / self.adcCLK
                 self.tdsSpec = np.column_stack((x, y))
+                # store file name and directory
+                f_str = filename.split('/')
+                self.tdsFileDir = '/'.join(f_str[-1])
+                self.tdsFileName = f_str[-1]
                 self.isData = True
                 return True
             except:
-                self.isData = False
                 return False
         else:
-            self.isData = False
             return False
 
 
