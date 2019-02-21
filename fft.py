@@ -72,6 +72,12 @@ class MainWindow(QtWidgets.QMainWindow):
         tdsCanvas.showGrid(x=True, y=True, alpha=0.8)
         self.tdsCurve = tdsCanvas.plot()
         self.tdsCurve.setPen(color='w', width=1)
+        # for window function mask
+        self.winFCurve = pg.PlotCurveItem()
+        tdsCanvas.addItem(self.winFCurve)
+        self.winFCurve.setPen(color='ff9b89', width=1)
+        self.winFCurve.setBrush(color=pg.hsvColor(0.09, 0.46, 1, 0.5))
+        self.winFCurve.setFillLevel(0)
 
         # for freq domain spectrum
         fdsCanvas = pg.PlotWidget(title='Frequency domain spectrum')
@@ -126,6 +132,18 @@ class MainWindow(QtWidgets.QMainWindow):
         parLayout.addWidget(self.batchBtn, 4, 0, 1, 2)
         self.parBox.setLayout(parLayout)
 
+    def wfPlot(self):
+        ''' Plot window function on top of the time domain spectrum '''
+
+        if self.tdsData.isData:
+            wf = self.filterBox.getWinF(self.tdsData.acqN + 1)
+            # adjust wf maximum to the maximum of data & concatenate x
+            x = self.tdsData.tdsSpec[:, 0]
+            y = self.tdsData.tdsSpec[:, 1]
+            self.winFCurve.setData(x, wf*np.max(y))
+        else:
+            pass
+
     def fdsPlot(self):
         ''' Plot frequency domain spectrum.
             Public available to receive signals from other widgets.
@@ -150,6 +168,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.infoBox.refresh()
             # plot data on tds canvas
             self.tdsCurve.setData(self.tdsData.tdsSpec)
+            self.wfPlot()
             # enable buttons and panels
             self.fftBox.setDisabled(False)
             self.filterBox.setDisabled(False)
@@ -184,6 +203,10 @@ class MainWindow(QtWidgets.QMainWindow):
     def calc(self, wfname='None'):
         ''' Calculate fft with selected window function '''
 
+        # apply window function to the full tds spectrum before truncating
+        wf = self.filterBox.getWinF(self.tdsData.acqN + 1)
+        y = self.tdsData.tdsSpec[:, 1] * wf
+
         # Select fft data range
         i_min = self.fftBox.fftMin()
         i_max = self.fftBox.fftMax()
@@ -193,16 +216,15 @@ class MainWindow(QtWidgets.QMainWindow):
             self.fftBox.fftMinInput.setStyleSheet('color: black')
             self.fftBox.fftMaxInput.setStyleSheet('color: black')
             if i_max < self.tdsData.acqN:
-                y = self.tdsData.tdsSpec[i_min:i_max+1, 1]
+                y = y[i_min:i_max+1]
             else:
-                y = self.tdsData.tdsSpec[i_min:, 1]
+                y = y[i_min:]
         else:   # invalid i_min & i_max will not take any affect
             # set warning text color
             self.fftBox.fftMinInput.setStyleSheet('color: #D63333')
             self.fftBox.fftMaxInput.setStyleSheet('color: #D63333')
-            y = self.tdsData.tdsSpec[:, 1]
 
-        # check zero-padding setting
+        # add zero-padding
         zp = self.fftBox.zeroPadding()
         if zp:
             yz = np.zeros(len(y) * zp)
@@ -210,10 +232,8 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             pass
 
-        # apply window function
-        wf = self.filterBox.get_wf(len(y))
         # fft
-        fft_y = np.fft.rfft(y * wf)
+        fft_y = np.fft.rfft(y)
         # calculate corresponding frequency
         f = np.fft.rfftfreq(len(y)) * self.tdsData.adcCLK
 
@@ -448,39 +468,126 @@ class FilterBox(QtGui.QGroupBox):
         self.parent = parent
 
         self.setTitle('Filter')
-        self.setAlignment(QtCore.Qt.AlignLeft)
+        self.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop)
         self.setDisabled(True)  # disable the box unless tds is loaded
 
         self.filterChoose = QtWidgets.QComboBox()
         self.filterChoose.addItems(['None',
+                                    'Maxwell-Boltzmann',
                                     'Bartlett',
                                     'Blackman',
                                     'Hamming',
                                     'Hanning'])
+        self.fLabel = QtWidgets.QLabel()    # display function
+        # You have to preset default values.
+        # Otherwise the 1st time to run getWinF will throw error
+        self.aInput = QtWidgets.QLineEdit('1') # adjusting parameter a
+        self.bInput = QtWidgets.QLineEdit('1')  # adjusting parameter b
+        #self.cInput = QtWidgets.QLineEdit('1') # adjusting parameter c
+        self.aNote = QtWidgets.QLabel()
+        self.bNote = QtWidgets.QLabel()
+        self.cNote = QtWidgets.QLabel()
+        self.aInput.setValidator(QtGui.QDoubleValidator())
+        self.bInput.setValidator(QtGui.QDoubleValidator())
+        #self.cInput.setValidator(QtGui.QDoubleValidator())
+        # once option / par changed, replot window function curve
+        self.filterChoose.currentTextChanged.connect(self._setWinF)
+        self.filterChoose.currentTextChanged.connect(self.parent.wfPlot)
         self.filterChoose.currentTextChanged.connect(self.parent.calc)
+        self.aInput.editingFinished.connect(self.parent.wfPlot)
+        self.bInput.editingFinished.connect(self.parent.wfPlot)
+        #self.cInput.editingFinished.connect(self.parent.wfPlot)
+        self.aInput.editingFinished.connect(self.parent.calc)
+        self.bInput.editingFinished.connect(self.parent.calc)
+        #self.cInput.editingFinished.connect(self.parent.calc)
+        self._setInputEnable(False)
+
         thisLayout = QtWidgets.QGridLayout()
         thisLayout.addWidget(QtWidgets.QLabel('Filter Type'), 0, 0)
         thisLayout.addWidget(self.filterChoose, 0, 1)
+        thisLayout.addWidget(self.fLabel, 1, 0, 1, 3)
+        thisLayout.addWidget(QtWidgets.QLabel('A = '), 2, 0)
+        thisLayout.addWidget(self.aInput, 2, 1)
+        thisLayout.addWidget(self.aNote, 2, 2)
+        thisLayout.addWidget(QtWidgets.QLabel('B = '), 3, 0)
+        thisLayout.addWidget(self.bInput, 3, 1)
+        thisLayout.addWidget(self.bNote, 3, 2)
+        #thisLayout.addWidget(QtWidgets.QLabel('C = '), 4, 0)
+        #thisLayout.addWidget(self.cInput, 4, 1)
+        #thisLayout.addWidget(self.cNote, 4, 2)
         self.setLayout(thisLayout)
 
-    def get_wf(self, n):
-        ''' Generate window function '''
+    def _setWinF(self):
+        ''' Set window function widgets '''
 
         w = self.filterChoose.currentText()
 
-        if w == 'None':
-            return np.ones(n)
-        elif w == 'Bartlett':
-            return np.bartlett(n)
-        elif w == 'Blackman':
-            return np.blackman(n)
-        elif w == 'Hamming':
-            return np.hamming(n)
-        elif w == 'Hanning':
-            return np.hanning(n)
+        # If Maxwell-Boltzmann, enable parameter editing, else disable
+        if w == 'Maxwell-Boltzmann':
+            self._setInputEnable(True)
+            self.fLabel.setText('f(x) ~ x^A * exp(-B * x * 1e-3) ')
+            self.aNote.setText('Position')
+            self.bNote.setText('Width & Tail')
         else:
-            return np.ones(n)
+            self.fLabel.setText('')
+            self._setInputEnable(False)
 
+
+    def _setInputEnable(self, bool):
+        ''' Set status for parameter input boxes '''
+
+        if bool:
+            self.aInput.setReadOnly(False)
+            self.bInput.setReadOnly(False)
+            #self.cInput.setReadOnly(False)
+            self.aInput.setStyleSheet('background-color: None; color: black')
+            self.bInput.setStyleSheet('background-color: None; color: black')
+            #self.cInput.setStyleSheet('background-color: None; color: black')
+        else:
+            self.aInput.setReadOnly(True)
+            self.bInput.setReadOnly(True)
+            #self.cInput.setReadOnly(True)
+            # Visually hide the par texts
+            self.aInput.setStyleSheet('background-color: #E0E0E0; color: #E0E0E0')
+            self.bInput.setStyleSheet('background-color: #E0E0E0; color: #E0E0E0')
+            #self.cInput.setStyleSheet('background-color: #E0E0E0; color: #E0E0E0')
+            # clear parameter note
+            self.aNote.setText('')
+            self.bNote.setText('')
+            #self.cNote.setText('')
+
+    def getWinF(self, n):
+        ''' Return window function array '''
+
+        w = self.filterChoose.currentText()
+
+        if w == 'Maxwell-Boltzmann':
+            x = np.arange(n)
+            A = float(self.aInput.text())
+            B = float(self.bInput.text())
+            #C = float(self.cInput.text())
+            # check par validity
+            if A < 0:
+                self.aInput.setStyleSheet('color: #D63333')
+                return np.zeros(n)
+            else:
+                self.aInput.setStyleSheet('color: black')
+            wf = np.power(x, A) * np.exp(-B * x * 1e-3)
+            # rescale to max(wf)=1
+            return wf / np.max(wf)
+        else:
+            if w == 'None':
+                return np.ones(n)
+            elif w == 'Bartlett':
+                return np.bartlett(n)
+            elif w == 'Blackman':
+                return np.blackman(n)
+            elif w == 'Hamming':
+                return np.hamming(n)
+            elif w == 'Hanning':
+                return np.hanning(n)
+            else:
+                return np.ones(n)
 
 class TDSData():
     '''
