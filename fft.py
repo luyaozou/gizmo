@@ -52,9 +52,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.batchAction = QtGui.QAction('Batch Process', self)
         self.batchAction.setShortcut('Ctrl+Shift+B')
         self.batchAction.triggered.connect(self._batch)
-        self.refFileAction = QtGui.QAction('Open Absorption Ref', self)
-        self.refFileAction.setShortcut('Ctrl+Shift+R')
-        self.refFileAction.triggered.connect(self._open_ref_file)
+        #self.refFileAction = QtGui.QAction('Open Absorption Ref', self)
+        #elf.refFileAction.setShortcut('Ctrl+Shift+R')
+        #self.refFileAction.triggered.connect(self._open_ref_file)
         self.saveFileAction = QtGui.QAction('Save File', self)
         self.saveFileAction.setShortcut('Ctrl+S')
         self.saveFileAction.triggered.connect(self._save)
@@ -63,7 +63,7 @@ class MainWindow(QtWidgets.QMainWindow):
         menuFile = self.menuBar().addMenu('&File')
         menuFile.addAction(self.openFileAction)
         menuFile.addAction(self.batchAction)
-        menuFile.addAction(self.refFileAction)
+        #menuFile.addAction(self.refFileAction)
         menuFile.addAction(self.saveFileAction)
 
     def _init_canvas(self):
@@ -93,19 +93,20 @@ class MainWindow(QtWidgets.QMainWindow):
         self.fdsCurve.setPen(color='FFB62F', width=1.5)
 
         # for absorption ref spectrum
-        absCanvas = pg.PlotWidget(title='Absorption spectrum reference')
-        absCanvas.setLabel('left', text='Intensity', units='a.u.')
-        absCanvas.setLabel('bottom', text='Line Frequency', units='Hz')
-        absCanvas.showGrid(x=True, y=True, alpha=0.8)
-        # fdsCanvas.setXLink(absCanvas)   # link two views
-        self.absCurve = absCanvas.plot()
-        self.absCurve.setPen(color='5dcfe2', width=1.5)
+        # absCanvas = pg.PlotWidget(title='Absorption spectrum reference')
+        # absCanvas.setLabel('left', text='Intensity', units='a.u.')
+        # absCanvas.setLabel('bottom', text='Line Frequency', units='Hz')
+        # absCanvas.showGrid(x=True, y=True, alpha=0.8)
+        # # fdsCanvas.setXLink(absCanvas)   # link two views
+        # self.absCurve = absCanvas.plot()
+        # self.absCurve.setPen(color='5dcfe2', width=1.5)
+        # absCanvas.setXLink(fdsCanvas)
 
         self.canvasBox = QtWidgets.QWidget()
         canvasLayout = QtWidgets.QVBoxLayout()  # layout for canvas
         canvasLayout.addWidget(tdsCanvas)  # time domain spectrum canvas
         canvasLayout.addWidget(fdsCanvas)  # freq domain spectrum canvas
-        canvasLayout.addWidget(absCanvas)  # absorption spectrum canvas
+        #canvasLayout.addWidget(absCanvas)  # absorption spectrum canvas
         self.canvasBox.setLayout(canvasLayout)
 
     def _init_parbox(self):
@@ -178,6 +179,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.filterBox.setDisabled(False)
             self.calcBtn.setDisabled(False)
             self.saveBtn.setDisabled(False)
+            self.batchBtn.setDisabled(False)
             # update lower & upper limits for the fft window
             self.fftBox.setInitInput()
             # initiate one fft plot
@@ -197,6 +199,8 @@ class MainWindow(QtWidgets.QMainWindow):
             status = self.absData.load_file(filename,
                         self.tdsData.minFreq, self.tdsData.maxFreq)
             if status:
+                # adjust position shift
+                self.absCurve.setPos(-self.tdsData.detFreq, 0)
                 self.absCurve.setData(self.absData.absSpec)
             else:
                 pass
@@ -264,7 +268,7 @@ class MainWindow(QtWidgets.QMainWindow):
             # rescale the frequency to MHz unit & adjust to line frequency
             spec[:, 0] = self.tdsData.detFreq - spec[:, 0] * 1e-6
             # prepare header
-            hd = self._getHeader()
+            hd = self.getHeader()
 
             # by default, save file to the same directory of the tds file
             filename, _ = QtWidgets.QFileDialog.getSaveFileName(self,
@@ -283,7 +287,17 @@ class MainWindow(QtWidgets.QMainWindow):
 
         print('batch')
 
-    def _getHeader(self):
+        filenames, _ = QtWidgets.QFileDialog.getOpenFileNames(self,
+            'Open Data File', self.tdsData.tdsFileDir, 'Time domain spectrum (*.tdf)')
+
+        if filenames:
+            progD = BatchProc(self, filenames)
+            progD.exec_()
+        else:
+            pass
+
+
+    def getHeader(self):
         ''' generate header information '''
 
         # prelogue
@@ -811,6 +825,64 @@ def check_fft_range(i_min, i_max, n):
         return True, i_min, i_max
     else:   # invalid, set to full range
         return False, 0, n
+
+
+class BatchProc(QtWidgets.QDialog):
+    ''' Batch process element with a progress bar dialog window '''
+
+    def __init__(self, parent, filenames):
+        QtGui.QWidget.__init__(self)
+        self.parent = parent
+        self.filenames = filenames
+        self.filenames.reverse()
+
+        # set up dialog bar
+        self.setWindowTitle('Batch Process')
+        self.progBar = QtWidgets.QProgressBar()
+        self.progBar.setValue(0)
+        self.progBar.setRange(0, len(filenames))
+        thisLayout = QtGui.QVBoxLayout()
+        thisLayout.addWidget(self.progBar)
+        self.setLayout(thisLayout)
+
+        # set timer
+        self.progTimer = QtCore.QTimer()
+        self.progTimer.setInterval(100)
+        self.progTimer.setSingleShot(True)
+        self.progTimer.timeout.connect(self._proc)
+        self.progTimer.start()
+
+    def _proc(self):
+        ''' Process '''
+
+        if self.filenames:
+            # load data file
+            filename = self.filenames.pop()
+            status = self.parent.tdsData.load_file(filename)
+            if status:  # sucessfully load file
+                # refresh info box
+                self.parent.infoBox.refresh()
+                # plot data on tds canvas
+                self.parent.tdsCurve.setData(self.parent.tdsData.tdsSpec)
+                self.parent.wfPlot()
+                self.parent.calc()
+                # save data with filename extension replaced to .txt
+                if self.parent.fftBox.limitFreqCheck.isChecked():
+                    spec = self.parent.fdsSpecLimit
+                else:
+                    spec = self.parent.fdsSpecFull
+                # rescale the frequency to MHz unit & adjust to line frequency
+                spec[:, 0] = self.parent.tdsData.detFreq - spec[:, 0] * 1e-6
+                # prepare header
+                hd = self.parent.getHeader()
+                np.savetxt(filename.replace('.tdf', '.txt'), spec,
+                           delimiter='\t', fmt='%.4f', header=hd)
+            else:
+                pass
+            self.progBar.setValue(self.progBar.value() + 1)
+            self.progTimer.start()
+        else:
+            pass
 
 
 if __name__ == '__main__':
