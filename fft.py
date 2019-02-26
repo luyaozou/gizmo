@@ -244,10 +244,11 @@ class MainWindow(QtWidgets.QMainWindow):
         # chop off the 0 frequency & concatenate spectrum
         self.fdsSpecFull = np.column_stack((f[1:], np.absolute(fft_y[1:])))
 
-        # calculate chirp frequency range
+        # calculate chirp frequency range & cut-low frequency range
         fmin = self.tdsData.imFreq * 1e6
         fmax = (self.tdsData.imFreq + self.tdsData.spanFreq) * 1e6
-        idx = np.logical_and(f[1:] >= fmin, f[1:] <= fmax)
+        fcut = self.fftBox.cutLowFreq()
+        idx = np.logical_and(f[1:] >= max(fmin, fcut), f[1:] <= fmax)
         self.fdsSpecLimit = self.fdsSpecFull[idx, :]
 
         # flip the array to get increasing frequency
@@ -426,6 +427,7 @@ class FFTBox(QtGui.QGroupBox):
         self.setAlignment(QtCore.Qt.AlignLeft)
         self.setDisabled(True)  # disable the box unless tds is loaded
 
+        # fft range
         self.fftMinInput = QtWidgets.QLineEdit()
         self.fftMaxInput = QtWidgets.QLineEdit()
         self.fftMinInput.textChanged.connect(self._refresh_min)
@@ -434,8 +436,7 @@ class FFTBox(QtGui.QGroupBox):
         self.fftMaxInput.editingFinished.connect(self.parent.calc)
         self.fftMinTime = QtWidgets.QLabel()
         self.fftMaxTime = QtWidgets.QLabel()
-        self.limitFreqCheck = QtWidgets.QCheckBox('Restrict spectrum to chirp frequency')
-        self.limitFreqCheck.stateChanged.connect(self.parent.fdsPlot)
+        # zero padding coeff
         self.zeroPaddingCheck = QtWidgets.QCheckBox('Zero Padding')
         self.zeroPaddingCheck.setChecked(True)
         self.zeroPaddingCheck.stateChanged.connect(self.parent.calc)
@@ -443,6 +444,14 @@ class FFTBox(QtGui.QGroupBox):
         self.zeroPaddingInput = QtWidgets.QLineEdit('1')
         self.zeroPaddingInput.setValidator(QtGui.QIntValidator(1, 9))
         self.zeroPaddingInput.editingFinished.connect(self.parent.calc)
+        # freq cutoff on display & data saving
+        self.limitFreqCheck = QtWidgets.QCheckBox('Restrict spectrum to chirp frequency')
+        self.limitFreqCheck.stateChanged.connect(self._set_cut_low)
+        self.limitFreqCheck.stateChanged.connect(self.parent.fdsPlot)
+        self.cutLowInput = QtWidgets.QLineEdit('20')
+        self.cutLowInput.setValidator(QtGui.QDoubleValidator(0, 30, 1))
+        self.cutLowInput.editingFinished.connect(self.parent.calc)
+        self._set_cut_low()
 
         thisLayout = QtWidgets.QGridLayout()
         thisLayout.addWidget(QtWidgets.QLabel('FFT Range'), 0, 0)
@@ -454,9 +463,11 @@ class FFTBox(QtGui.QGroupBox):
         thisLayout.addWidget(self.fftMaxInput, 2, 1)
         thisLayout.addWidget(self.fftMinTime, 1, 2)
         thisLayout.addWidget(self.fftMaxTime, 2, 2)
-        thisLayout.addWidget(self.limitFreqCheck, 3, 0, 1, 2)
-        thisLayout.addWidget(self.zeroPaddingCheck, 4, 0, 1, 1)
-        thisLayout.addWidget(self.zeroPaddingInput, 4, 1, 1, 1)
+        thisLayout.addWidget(self.zeroPaddingCheck, 3, 0, 1, 1)
+        thisLayout.addWidget(self.zeroPaddingInput, 3, 1, 1, 1)
+        thisLayout.addWidget(self.limitFreqCheck, 4, 0, 1, 2)
+        thisLayout.addWidget(QtWidgets.QLabel('Cut Low Freq (MHz)'), 5, 0, 1, 1)
+        thisLayout.addWidget(self.cutLowInput, 5, 1, 1, 1)
         self.setLayout(thisLayout)
 
     def _refresh_min(self):
@@ -474,7 +485,7 @@ class FFTBox(QtGui.QGroupBox):
         self.fftMaxTime.setText(pg.siFormat(t_max, precision=4, suffix='s'))
 
     def _set_zero_padding(self):
-        ''' Config zero padding setting '''
+        ''' Enable/disable zero padding setting '''
 
         if self.zeroPaddingCheck.isChecked():
             self.zeroPaddingInput.setReadOnly(False)
@@ -483,6 +494,15 @@ class FFTBox(QtGui.QGroupBox):
             self.zeroPaddingInput.setReadOnly(True)
             self.zeroPaddingInput.setStyleSheet('background-color: #E0E0E0')
 
+    def _set_cut_low(self):
+        ''' Enable/disable cut low setting '''
+
+        if self.limitFreqCheck.isChecked():
+            self.cutLowInput.setReadOnly(False)
+            self.cutLowInput.setStyleSheet('background-color: None')
+        else:
+            self.cutLowInput.setReadOnly(True)
+            self.cutLowInput.setStyleSheet('background-color: #E0E0E0')
 
     def setInitInput(self):
         ''' Set initial fft window input from tds data '''
@@ -522,6 +542,14 @@ class FFTBox(QtGui.QGroupBox):
 
         if self.fftMaxInput.text():
             return int(self.fftMaxInput.text())
+        else:
+            return 0
+
+    def cutLowFreq(self):
+        ''' Return the cut-low frequency (float) in Hz '''
+
+        if self.cutLowInput.text():
+            return float(self.cutLowInput.text()) * 1e6
         else:
             return 0
 
