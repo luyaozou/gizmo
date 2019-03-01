@@ -1,15 +1,76 @@
 #! encoding = utf-8
 
 ''' This script is used for performing basic fft transformation
-and filtering for the PhLAM mm chirped pulse spectrum '''
+and filtering for the PhLAM mm chirped pulse spectrum.
+It also provides least-square fit (uses lmfit) for the processed spectrum.
+'''
 
 import sys
 import numpy as np
 from PyQt5 import QtWidgets, QtGui, QtCore
 import pyqtgraph as pg
+import lmfit
+from scipy.special import wofz
 
 DEFAULT_DIR = '/home/luyao/Documents/Data'
+INTVL = 50  # waiting interval for batch process
 ABS_RANGE = 100 # maximum absorption freq range +/- full FFT freq range (MHz)
+
+
+def gaussian(x, sigma):
+    ''' Return Gaussian line shape at x with HWHM sigma centered at 0'''
+
+    return np.sqrt(np.log(2)/np.pi) / sigma * np.exp(-(x/sigma)**2 * np.log(2))
+
+def lorentzian(x, gamma):
+    ''' Return Lorentzian line shape at x with HWHM gamma centered at 0'''
+
+    return gamma / np.pi / (x**2 + gamma**2)
+
+def voigt1(x, sigma, gamma):
+    '''
+    Return the Voigt line shape at x with Lorentzian component HWHM gamma
+    and Gaussian component HWHM sigma centered at 0
+    '''
+
+    ss = sigma / np.sqrt(2 * np.log(2))
+
+    return np.real(wofz((x + 1j*gamma)/ss/np.sqrt(2))) / ss / np.sqrt(2*np.pi)
+
+
+def f2min(pars, x, y):
+    ''' Voigt function to be minimized.
+    Arguments:
+        pars: parameter list = [x0#, a#, sigma#, gamma#]
+        x: np.array
+        y: np.array
+    Returns:
+        res: np.array = f(x)-y
+    '''
+
+    v = pars.valuesdict()
+    model = 0
+    for n in range(len(v)//4):
+        model += voigt1(x - v['x0'+str(n)], v['sigma'+str(n)], v['gamma'+str(n)]) * v['a'+str(n)]
+
+    return model - y
+
+
+def peak_search(x, y, w):
+    ''' Peak search algorithm.
+    Arguments:
+        x: np.array    x data
+        y: np.array    y data
+        w: width       int
+    Returns:
+        [[x0, a0], ]: np.array of initial guesses for x0 and a0
+    '''
+
+    # test algorithm
+    peak = np.argmax(y)
+
+    return np.column_stack((x[peak], y[peak]*1.5))
+
 
 class MainWindow(QtWidgets.QMainWindow):
     '''
@@ -25,7 +86,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setMinimumHeight(600)
         self.resize(QtCore.QSize(1200, 800))
 
-        # initiate component classes
+        # initiate component widgets
         self._init_menubar()
         self._init_canvas()
         self._init_parbox()
@@ -36,7 +97,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.mainLayout = QtWidgets.QHBoxLayout()
         self.mainLayout.setSpacing(6)
         self.mainLayout.addWidget(self.canvasBox)
-        self.mainLayout.addWidget(self.parBox)
+        self.mainLayout.addWidget(self.parWidget)
 
         # Enable main window
         self.mainWidget = QtWidgets.QWidget()
@@ -46,6 +107,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _init_menubar(self):
         ''' Initiate menu bar '''
 
+        # fft part
         self.openFileAction = QtGui.QAction('Open File', self)
         self.openFileAction.setShortcut('Ctrl+O')
         self.openFileAction.triggered.connect(self._open_file)
@@ -66,12 +128,21 @@ class MainWindow(QtWidgets.QMainWindow):
         #menuFile.addAction(self.refFileAction)
         menuFile.addAction(self.saveFileAction)
 
+        # fit file part
+        self.openFitDiagAction = QtGui.QAction('Open Fit Window', self)
+        self.openFitDiagAction.setShortcut('Ctrl+Shift+F')
+        self.openFitDiagAction.triggered.connect(self._open_fit_diag)
+        fitFile = self.menuBar().addMenu('&Fit')
+        fitFile.addAction(self.openFitDiagAction)
+        self.fitDiag = FitDiag(self)
+
     def _init_canvas(self):
-        ''' initiate plot canvas '''
+        ''' Initiate plot canvas '''
 
         # for time domain spectrum
         tdsCanvas = pg.PlotWidget(title='Time domain spectrum')
         tdsCanvas.setLabel('left', text='Voltage', units='V')
+        tdsCanvas.setLabel('right')
         tdsCanvas.setLabel('bottom', text='Time', units='s')
         tdsCanvas.showGrid(x=True, y=True, alpha=0.8)
         self.tdsCurve = tdsCanvas.plot()
@@ -85,7 +156,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # for freq domain spectrum
         fdsCanvas = pg.PlotWidget(title='Frequency domain spectrum')
-        fdsCanvas.setLabel('left', text='Intensity', units='a.u.')
+        fdsCanvas.setLabel('left', text='Intensity', units='')
+        fdsCanvas.setLabel('right')
         fdsCanvas.setLabel('bottom', text='FFT Frequency', units='Hz')
         fdsCanvas.showGrid(x=True, y=True, alpha=0.8)
         fdsCanvas.invertX(True)
@@ -112,7 +184,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _init_parbox(self):
         ''' initiate parameter box widgets '''
 
-        self.parBox = QtWidgets.QWidget()
+        self.parWidget = QtWidgets.QWidget()
         parLayout = QtWidgets.QGridLayout()    # layout for parameters
         self.infoBox = InfoBox(self)    # for scan info (from file header)
         self.fftBox = FFTBox(self)      # for fft window & other settings
@@ -135,7 +207,7 @@ class MainWindow(QtWidgets.QMainWindow):
         parLayout.addWidget(self.calcBtn, 3, 0, 1, 1)
         parLayout.addWidget(self.saveBtn, 3, 1, 1, 1)
         parLayout.addWidget(self.batchBtn, 4, 0, 1, 2)
-        self.parBox.setLayout(parLayout)
+        self.parWidget.setLayout(parLayout)
 
     def wfPlot(self):
         ''' Plot window function on top of the time domain spectrum '''
@@ -186,6 +258,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self.calc()
         else:
             pass
+
+    def _open_fit_diag(self):
+        ''' Open spectral fit dialog '''
+
+        self.fitDiag.exec_()
 
     def _open_ref_file(self):
         ''' Open an absorption spectrum as a reference '''
@@ -258,7 +335,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.fdsPlot()
 
     def _save(self):
-        ''' save spectrum '''
+        ''' Save spectrum '''
 
         if self.tdsData.isData:
             if self.fftBox.limitFreqCheck.isChecked():
@@ -276,7 +353,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     'Save Spectrum', self.tdsData.tdsFileDir, 'Frequency domain spectrum (*)')
             if filename:
                 np.savetxt(filename, spec, delimiter='\t',
-                           fmt='%.4f', header=hd)
+                           fmt=['%.4f', '%8e'], header=hd)
             else:
                 pass
         else:
@@ -286,17 +363,14 @@ class MainWindow(QtWidgets.QMainWindow):
     def _batch(self):
         ''' Batch Process '''
 
-        print('batch')
-
         filenames, _ = QtWidgets.QFileDialog.getOpenFileNames(self,
-            'Open Data File', self.tdsData.tdsFileDir, 'Time domain spectrum (*.tdf)')
+            'Open Data Files', self.tdsData.tdsFileDir, 'Time domain spectrum (*.tdf)')
 
         if filenames:
-            progD = BatchProc(self, filenames)
+            progD = BatchProc(self, filenames, type='fft')
             progD.exec_()
         else:
             pass
-
 
     def getHeader(self):
         ''' generate header information '''
@@ -345,20 +419,20 @@ class MainWindow(QtWidgets.QMainWindow):
             event.ignore()
 
 
-class InfoBox(QtGui.QGroupBox):
+class InfoBox(QtWidgets.QGroupBox):
     '''
         Scan information box
     '''
 
     def __init__(self, parent):
-        QtGui.QWidget.__init__(self, parent)
+        QtWidgets.QWidget.__init__(self, parent)
         self.parent = parent
 
         self.setTitle('Scan Information')
         self.setAlignment(QtCore.Qt.AlignLeft)
 
-        self.filenamLabel = QtWidgets.QLabel()
-        self.filenamLabel.setStyleSheet('color: #0b4495; font: bold; font-size: 14px')
+        self.filenameLabel = QtWidgets.QLabel()
+        self.filenameLabel.setStyleSheet('color: #0b4495; font: bold; font-size: 14px')
         self.minFreqLabel = QtWidgets.QLabel()
         self.maxFreqLabel = QtWidgets.QLabel()
         self.detFreqLabel = QtWidgets.QLabel()
@@ -371,7 +445,7 @@ class InfoBox(QtGui.QGroupBox):
         self.repRateLabel = QtWidgets.QLabel()
 
         thisLayout = QtWidgets.QGridLayout()
-        thisLayout.addWidget(self.filenamLabel, 0, 0, 1, 2)
+        thisLayout.addWidget(self.filenameLabel, 0, 0, 1, 2)
         thisLayout.addWidget(QtWidgets.QLabel('Frequency MIN: '), 1, 0)
         thisLayout.addWidget(QtWidgets.QLabel('Frequency MAX: '), 2, 0)
         thisLayout.addWidget(QtWidgets.QLabel('Detection Freq: '), 3, 0)
@@ -401,7 +475,7 @@ class InfoBox(QtGui.QGroupBox):
             Other frequencies (clock, pulse, etc.) are in SI units and use pg.siFormat() to format.
         '''
 
-        self.filenamLabel.setText(self.parent.tdsData.tdsFileName)
+        self.filenameLabel.setText(self.parent.tdsData.tdsFileName)
         self.minFreqLabel.setText('{:.2f} MHz'.format(self.parent.tdsData.minFreq))
         self.maxFreqLabel.setText('{:.2f} MHz'.format(self.parent.tdsData.maxFreq))
         self.detFreqLabel.setText('{:.2f} MHz'.format(self.parent.tdsData.detFreq))
@@ -414,13 +488,13 @@ class InfoBox(QtGui.QGroupBox):
         self.repRateLabel.setText('{:g}'.format(self.parent.tdsData.repRate))
 
 
-class FFTBox(QtGui.QGroupBox):
+class FFTBox(QtWidgets.QGroupBox):
     '''
         FFT setting box
     '''
 
     def __init__(self, parent):
-        QtGui.QWidget.__init__(self, parent)
+        QtWidgets.QWidget.__init__(self, parent)
         self.parent = parent
 
         self.setTitle('FFT Setting')
@@ -554,13 +628,13 @@ class FFTBox(QtGui.QGroupBox):
             return 0
 
 
-class FilterBox(QtGui.QGroupBox):
+class FilterBox(QtWidgets.QGroupBox):
     '''
         Filter setting box
     '''
 
     def __init__(self, parent):
-        QtGui.QWidget.__init__(self, parent)
+        QtWidgets.QWidget.__init__(self, parent)
         self.parent = parent
 
         self.setTitle('Filter')
@@ -858,11 +932,14 @@ def check_fft_range(i_min, i_max, n):
 class BatchProc(QtWidgets.QDialog):
     ''' Batch process element with a progress bar dialog window '''
 
-    def __init__(self, parent, filenames):
+    def __init__(self, parent, filenames, type):
+        ''' 'type' tells which batch function to envoke '''
+
         QtGui.QWidget.__init__(self)
         self.parent = parent
         self.filenames = filenames
         self.filenames.reverse()
+        self.type = type
 
         # set up dialog bar
         self.setWindowTitle('Batch Process')
@@ -875,13 +952,23 @@ class BatchProc(QtWidgets.QDialog):
 
         # set timer
         self.progTimer = QtCore.QTimer()
-        self.progTimer.setInterval(100)
+        self.progTimer.setInterval(INTVL)
         self.progTimer.setSingleShot(True)
-        self.progTimer.timeout.connect(self._proc)
+        self.progTimer.timeout.connect(self._timer_ctrl)
         self.progTimer.start()
 
-    def _proc(self):
-        ''' Process '''
+    def _timer_ctrl(self):
+        ''' Control the timer '''
+
+        if self.type == 'fft':
+            self._proc_fft()
+        elif self.type == 'fit':
+            self._proc_fit()
+        else:
+            pass
+
+    def _proc_fft(self):
+        ''' Process batch fft with current settings '''
 
         if self.filenames:
             # load data file
@@ -911,6 +998,415 @@ class BatchProc(QtWidgets.QDialog):
             self.progTimer.start()
         else:
             pass
+
+
+    def _proc_fit(self):
+        ''' Process batch fit with current settings '''
+
+        if self.filenames:
+            # load data file
+            filename = self.filenames.pop()
+            status = self.parent.loadSingle(filename)
+            if status:
+                self.parent.fitParBox.autoPeak()
+                self.parent.fit(depress=True)
+                # prepare header
+                hd = 'This spectrum is fitted by fft.py (Luyao Zou).\n'
+                hd += 'Source file: ' + filename + '\n'
+                hd += 'Log file: ' + filename.replace('.fit', '.log') + '\n'
+                hd += 'x (MHz)  y_data  y_fit'
+                data = np.column_stack((self.parent.dataX, self.parent.dataY, self.parent.fitResY))
+                np.savetxt(filename[:-4]+'.fit', header=hd, fmt=['%.4f', '%8e', '%8e'])
+                with open(filename[:-4]+'.log', 'w') as f:
+                    f.write(lmfit.fit_report(self.fitRes))
+            else:
+                pass
+            self.progBar.setValue(self.progBar.value() + 1)
+            self.progTimer.start()
+        else:
+            pass
+
+
+class FitDiag(QtGui.QDialog):
+    ''' Dialog window for spectral fit '''
+
+    def __init__(self, parent):
+
+        QtGui.QWidget.__init__(self)
+        self.parent = parent
+        self.dataX = np.zeros(1)
+        self.dataY = np.zeros(1)
+        self.fitResY = np.zeros(1)
+        self.dataName = ''           # data file name
+        self.dataDir = DEFAULT_DIR   # data file directory
+        self.fitReport = ''
+
+        self.setWindowTitle('Fit Spectrum')
+        self.setMinimumWidth(800)
+        self.setMinimumHeight(600)
+        self.resize(QtCore.QSize(1200, 600))
+
+        # Initiate component widgets\
+        self._init_canvas()
+        self._init_parbox()
+
+        # Set window layout
+        thisLayout = QtGui.QGridLayout()
+        thisLayout.addWidget(self.fitGW, 0, 0, 3, 3)
+        thisLayout.addWidget(self.parWidget, 0, 3, 3, 1)
+        self.setLayout(thisLayout)
+
+    def _init_canvas(self):
+        ''' Initiate fit plot canvas '''
+
+        self.fitGW = pg.GraphicsWindow(title='Frequency domain spectrum')
+        p1 = self.fitGW.addPlot(row=0, col=0)
+        p2 = self.fitGW.addPlot(row=1, col=0)
+        p1.setTitle('Spectrum')
+        p1.setLabel('left', text='Intensity', units='')
+        p1.setLabel('bottom', text='Frequency', units='Hz')
+        p1.setLabel('right')
+        p1.showGrid(x=True, y=True, alpha=0.8)
+        p2.setTitle('Residual')
+        p2.setLabel('left', text='Intensity', units='')
+        p2.setLabel('bottom', text='Frequency', units='Hz')
+        p2.setLabel('right')
+        p2.showGrid(x=True, y=True, alpha=0.8)
+        p2.setXLink(p1)
+        self.specCurve = p1.plot()
+        self.specCurve.setPen(color='FFB62F', width=1.5)
+        self.fitCurve = pg.PlotCurveItem()
+        p1.addItem(self.fitCurve)
+        self.fitCurve.setPen(color='6EBABA', width=1.5)
+        self.residCurve = p2.plot()
+        self.residCurve.setPen(color='FFB62F', width=1.5)
+
+    def _init_parbox(self):
+        ''' Initiate fit parameter box widgets '''
+
+        self.filenameLabel = QtWidgets.QLabel()
+        self.filenameLabel.setStyleSheet('color: #0b4495; font: bold; font-size: 14px')
+        self.fitParBox = FitParBox(self)
+        self.openBtn = QtWidgets.QPushButton('Open')
+        self.openBtn.clicked.connect(self._open)
+        self.fitBtn = QtWidgets.QPushButton('Fit')
+        self.fitBtn.clicked.connect(self.fit)
+        self.saveBtn = QtWidgets.QPushButton('Save')
+        self.saveBtn.clicked.connect(self._save_fit)
+        self.batchBtn = QtWidgets.QPushButton('Batch')
+        self.batchBtn.clicked.connect(self._batch_fit)
+
+        self.parWidget = QtWidgets.QWidget()
+        parLayout = QtWidgets.QGridLayout()
+        parLayout.addWidget(self.openBtn, 0, 0, 1, 1)
+        parLayout.addWidget(self.batchBtn, 0, 1, 1, 1)
+        parLayout.addWidget(self.filenameLabel, 1, 0, 1, 2)
+        parLayout.addWidget(self.fitParBox, 2, 0, 4, 2)
+        parLayout.addWidget(self.fitBtn, 6, 0, 1, 1)
+        parLayout.addWidget(self.saveBtn, 6, 1, 1, 1)
+        self.parWidget.setLayout(parLayout)
+
+
+    def fit(self, depress=False):
+        ''' Fit spectrum. Depress warning dialog default = False'''
+
+        params = self._getParams()
+        try:
+            minner = lmfit.Minimizer(f2min, params, fcn_args=(self.dataX, self.dataY))
+            self.fitRes = minner.minimize()
+            # plot residual
+            self.residCurve.setData(self.dataX*1e6, self.fitRes.residual)
+            # plot fit
+            self.fitResY = self.dataY + self.fitRes.residual
+            self.fitCurve.setData(self.dataX*1e6, self.fitResY)
+        except ValueError:
+            if depress:
+                pass
+            else:
+                d = QtWidgets.QMessageBox(QtGui.QMessageBox.Warning, 'Fit fails', 'Please update your initial guess.')
+                d.exec_()
+
+    def _getParams(self):
+        ''' Get initial guesses of parameters from user input.
+        Returns: lmfit Parameters() object.
+        '''
+
+        params = lmfit.Parameters()
+        for key, value in self.fitParBox.getValues().items():
+            params.add(key, value)
+        return params
+
+    def _open(self):
+        ''' Open single frequency domain spectrum & plot it '''
+
+        # open file dialog
+        filename, _ = QtWidgets.QFileDialog.getOpenFileName(self,
+                'Open Data File', self.dataDir, 'Frequency domain spectrum (*.txt *.csv *.dat)')
+        if filename:
+            status = self.loadSingle(filename)
+            if status:
+                pass
+            else:
+                d = QtWidgets.QMessageBox(QtGui.QMessageBox.Warning, 'Wrong data format', 'Please select correct data files.')
+                d.exec_()
+        else:
+            pass
+
+    def loadSingle(self, filename):
+        ''' Load single data file. Returns status '''
+
+        # clear plot
+        self.specCurve.clear()
+        self.fitCurve.clear()
+        self.residCurve.clear()
+        # reset peak
+        self.fitParBox.resetPeak()
+        try:
+            data = np.loadtxt(filename, skiprows=9)
+            self.dataX = data[:, 0]
+            self.dataY = data[:, 1]
+            # update label & plot
+            _l = filename.split('/')
+            self.dataDir = '/'.join(_l[:-1])
+            self.dataName = _l[-1]
+            self.filenameLabel.setText(self.dataName)
+            # make freq unit Hz to cope with pyqtgraph
+            self.specCurve.setData(self.dataX*1e6, self.dataY)
+            # enable par box
+            self.fitParBox.setDisabled(False)
+            return True
+        except:
+            return False
+
+    def _save_fit(self):
+        ''' Save fit spetrum & fit result. '''
+
+        filename, _ = QtWidgets.QFileDialog.getSaveFileName(self,
+                'Save Spectrum & Fit', self.dataDir, 'Spectral fit (*.fit)')
+
+        if filename:
+            # prepare header
+            hd = 'This spectrum is fitted by fft.py (Luyao Zou).\n'
+            hd += 'Source file: ' + filename + '\n'
+            hd += 'Log file: ' + filename.replace('.fit', '.log') + '\n'
+            hd += 'x (MHz)  y_data  y_fit'
+            data = np.column_stack((self.dataX, self.dataY, self.fitResY))
+            np.savetxt(filename, data, header=hd, fmt=['%.4f', '%8e', '%8e'])
+            with open(filename.replace('.fit', '.log'), 'w') as f:
+                f.write(lmfit.fit_report(self.fitRes))
+        else:
+            pass
+
+    def _batch_fit(self):
+        ''' Batch fit '''
+
+        filenames, _ = QtWidgets.QFileDialog.getOpenFileNames(self,
+            'Open Files to Fit', self.dataDir, 'Frequency domain spectrum (*.txt, *.csv, *.dat)')
+
+        if filenames:
+            progD = BatchProc(self, filenames, type='fit')
+            progD.exec_()
+        else:
+            pass
+
+
+class FitParBox(QtWidgets.QGroupBox):
+    ''' Fit parameter box '''
+
+    def __init__(self, parent):
+        QtWidgets.QWidget.__init__(self, parent)
+        self.parent = parent
+
+        self.setTitle('Fit parameters')
+        self.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop)
+
+        self.autoPeakBtn = QtWidgets.QPushButton('Auto Peak')
+        self.autoPeakBtn.clicked.connect(self.autoPeak)
+        self.addPeakBtn = QtWidgets.QPushButton('Add Peak')
+        self.addPeakBtn.clicked.connect(self._add_peak)
+        self.parObjList = []   # FitParSet object list
+        # add all delete button to this group for tracking
+        self.delBtnGroup = QtWidgets.QButtonGroup()
+        self.delBtnGroup.buttonClicked[int].connect(self._del_peak)
+
+        self.entryLayout = QtWidgets.QGridLayout()
+        self.entryLayout.setAlignment(QtCore.Qt.AlignTop | QtCore.Qt.AlignJustify)
+        self.entryLayout.addWidget(self.addPeakBtn, 0, 0, 1, 2)
+        self.entryLayout.addWidget(self.autoPeakBtn, 0, 3, 1, 2)
+        self.entryLayout.addWidget(QtWidgets.QLabel('Fit pars'), 1, 0)
+        self.entryLayout.addWidget(QtWidgets.QLabel('Peak x0 (MHz)'), 1, 1)
+        self.entryLayout.addWidget(QtWidgets.QLabel('A'), 1, 2)
+        self.entryLayout.addWidget(QtWidgets.QLabel('σ'), 1, 3)
+        self.entryLayout.addWidget(QtWidgets.QLabel('γ'), 1, 4)
+        self._add_peak()    # initialize one peak input entry
+
+        entryWidgets = QtWidgets.QWidget()
+        entryWidgets.setLayout(self.entryLayout)
+
+        entryArea = QtWidgets.QScrollArea()
+        entryArea.setWidgetResizable(True)
+        entryArea.setWidget(entryWidgets)
+
+        # Set up main layout
+        mainLayout = QtWidgets.QVBoxLayout()
+        mainLayout.setSpacing(0)
+        mainLayout.addWidget(entryArea)
+        self.setLayout(mainLayout)
+        self.setDisabled(True)
+
+    def resetPeak(self):
+        ''' Reset to default one peak '''
+
+        if self.parObjList:
+            n = len(self.parObjList)
+            if n>1:
+                for i in range(n-1):
+                    self._del_peak(i)
+            else:
+                pass
+        else:
+            self._add_peak()
+
+    def autoPeak(self):
+        ''' Auto peak algorithm '''
+
+        # estimate width
+        w = round(0.9 / np.min(np.diff(self.parent.dataX)))
+        peak_pos = peak_search(self.parent.dataX, self.parent.dataY, w)
+        # check number of peaks with existing peak input widgets
+        n_peak = np.shape(peak_pos)[0]
+        n_obj = len(self.parObjList)
+        if n_peak < n_obj:   # remove extra rows
+            for i in range(n_obj - n_peak):
+                self._del_peak(n_obj - 1 - i)
+        elif n_peak > n_obj:  # add more rows
+            for i in range(n_peak - n_obj):
+                self._add_peak()
+        else:
+            pass
+        # modify the x0Input & a0Input values for all peaks
+        # again here one needs to differenciate the button id
+        # (which is the parObjList key) and loop index of peak_pos
+        for i in range(n_peak):
+            self.parObjList[i].x0Input.setText('{:.2f}'.format(peak_pos[i, 0]))
+            self.parObjList[i].aInput.setText('{:g}'.format(peak_pos[i, 1]))
+            # estimate line width
+            self.parObjList[i].sigmaInput.setText('0.1')
+            self.parObjList[i].gammaInput.setText('0.5')
+            # reset cursor
+            self.parObjList[i].x0Input.setCursorPosition(0)
+            self.parObjList[i].aInput.setCursorPosition(0)
+            self.parObjList[i].sigmaInput.setCursorPosition(0)
+            self.parObjList[i].gammaInput.setCursorPosition(0)
+
+    def _add_peak(self):
+        ''' Manually add peak '''
+
+        n = len(self.parObjList)    # get current peak number
+        parobj = FitParSet(self)
+        self.parObjList.append(parobj)
+        self.entryLayout.addWidget(parobj.delBtn, n+2, 0)
+        self.entryLayout.addWidget(parobj.x0Input, n+2, 1)
+        self.entryLayout.addWidget(parobj.aInput, n+2, 2)
+        self.entryLayout.addWidget(parobj.sigmaInput, n+2, 3)
+        self.entryLayout.addWidget(parobj.gammaInput, n+2, 4)
+        self.delBtnGroup.addButton(parobj.delBtn, n)
+
+    def _del_peak(self, btn_id):
+        ''' Delete one peak from the peak list '''
+
+        obj = self.parObjList[btn_id]
+        self.delBtnGroup.removeButton(obj.delBtn)
+        del self.parObjList[btn_id]
+        obj.delSet()
+        # reset button ids > btn_id
+        # by doing so, btn_id is kept the same as list index
+        for obj in self.parObjList[btn_id:]:
+            self.delBtnGroup.setId(obj.delBtn, self.delBtnGroup.id(obj.delBtn) - 1)
+
+    def getValues(self):
+        ''' Get parameter values from all parameter sets.
+        Returns:
+            p_dict: dictionary {'parname#': parvalue}
+        '''
+
+        p_dict = {}
+        # Don't change this particular way of loop because
+        # the button id is in general different from
+        # the parameter index, as multiple buttons can be
+        # removed before getting the parameter values.
+        for i in range(len(self.parObjList)):
+            obj = self.parObjList[i]
+            p_dict['x0'+str(i)] = obj.getValue('x0')
+            p_dict['a'+str(i)] = obj.getValue('a')
+            p_dict['sigma'+str(i)] = obj.getValue('sigma')
+            p_dict['gamma'+str(i)] = obj.getValue('gamma')
+        return p_dict
+
+
+class FitParSet(QtWidgets.QWidget):
+    ''' Fit parameter set objects '''
+
+    def __init__(self, parent):
+        QtWidgets.QWidget.__init__(self, parent)
+        self.parent = parent
+
+        self.delBtn = QtWidgets.QPushButton('Del')
+        self.x0Input = QtWidgets.QLineEdit()
+        self.aInput = QtWidgets.QLineEdit()
+        self.sigmaInput = QtWidgets.QLineEdit()
+        self.gammaInput = QtWidgets.QLineEdit()
+        self.delBtn.setMaximumWidth(50)
+        self.x0Input.setMaximumWidth(120)
+        self.aInput.setMaximumWidth(60)
+        self.sigmaInput.setMaximumWidth(60)
+        self.gammaInput.setMaximumWidth(60)
+        self.x0Input.setValidator(QtGui.QDoubleValidator())
+        self.aInput.setValidator(QtGui.QDoubleValidator())
+        self.sigmaInput.setValidator(QtGui.QDoubleValidator())
+        self.gammaInput.setValidator(QtGui.QDoubleValidator())
+
+    def delSet(self):
+
+        self.x0Input.clear()
+        self.aInput.clear()
+        self.sigmaInput.clear()
+        self.gammaInput.clear()
+        self.x0Input.deleteLater()
+        self.aInput.deleteLater()
+        self.sigmaInput.deleteLater()
+        self.gammaInput.deleteLater()
+        self.delBtn.deleteLater()
+
+    def getValue(self, parname):
+        ''' Return parameter values for the given parname '''
+
+        if parname == 'x0':
+            t = self.x0Input.text()
+            if t:
+                return float(t)
+            else:
+                return 1
+        elif parname == 'a':
+            t = self.aInput.text()
+            if t:
+                return float(t)
+            else:
+                return 1
+        elif parname == 'sigma':
+            t = self.sigmaInput.text()
+            if t:
+                return float(t)
+            else:
+                return 1
+        elif parname == 'gamma':
+            t = self.gammaInput.text()
+            if t:
+                return float(t)
+            else:
+                return 1
+        else:
+            return 1
 
 
 if __name__ == '__main__':
