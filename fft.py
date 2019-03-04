@@ -1093,6 +1093,7 @@ class FitDiag(QtGui.QDialog):
 
         self.filenameLabel = QtWidgets.QLabel()
         self.filenameLabel.setStyleSheet('color: #0b4495; font: bold; font-size: 14px')
+        self.filenameLabel.setMaximumHeight(30)
         self.fitParBox = FitParBox(self)
         self.openBtn = QtWidgets.QPushButton('Open')
         self.openBtn.clicked.connect(self._open)
@@ -1227,10 +1228,19 @@ class FitParBox(QtWidgets.QGroupBox):
         self.setTitle('Fit parameters')
         self.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop)
 
+        # Buttons
         self.autoPeakBtn = QtWidgets.QPushButton('Auto Peak')
         self.autoPeakBtn.clicked.connect(self.autoPeak)
         self.addPeakBtn = QtWidgets.QPushButton('Add Peak')
         self.addPeakBtn.clicked.connect(self._add_peak)
+        # Paramenter sliders
+        self._init_slider()
+        # Fix par checkboxes. Make this also the label of the variables.
+        self.x0FixCheck = QtWidgets.QCheckBox('Fix | Peak')
+        self.aFixCheck = QtWidgets.QCheckBox('Fix | A')
+        self.sigmaFixCheck = QtWidgets.QCheckBox('Fix | σ')
+        self.gammaFixCheck = QtWidgets.QCheckBox('Fix | γ')
+
         self.parObjList = []   # FitParSet object list
         # add all delete button to this group for tracking
         self.delBtnGroup = QtWidgets.QButtonGroup()
@@ -1238,13 +1248,11 @@ class FitParBox(QtWidgets.QGroupBox):
 
         self.entryLayout = QtWidgets.QGridLayout()
         self.entryLayout.setAlignment(QtCore.Qt.AlignTop | QtCore.Qt.AlignJustify)
-        self.entryLayout.addWidget(self.addPeakBtn, 0, 0, 1, 2)
-        self.entryLayout.addWidget(self.autoPeakBtn, 0, 3, 1, 2)
-        self.entryLayout.addWidget(QtWidgets.QLabel('Fit pars'), 1, 0)
-        self.entryLayout.addWidget(QtWidgets.QLabel('Peak x0 (MHz)'), 1, 1)
-        self.entryLayout.addWidget(QtWidgets.QLabel('A'), 1, 2)
-        self.entryLayout.addWidget(QtWidgets.QLabel('σ'), 1, 3)
-        self.entryLayout.addWidget(QtWidgets.QLabel('γ'), 1, 4)
+        self.entryLayout.addWidget(QtWidgets.QLabel('Fit pars'), 0, 0)
+        self.entryLayout.addWidget(QtWidgets.QLabel('Peak x0 (MHz)'), 0, 1)
+        self.entryLayout.addWidget(QtWidgets.QLabel('A'), 0, 2)
+        self.entryLayout.addWidget(QtWidgets.QLabel('σ'), 0, 3)
+        self.entryLayout.addWidget(QtWidgets.QLabel('γ'), 0, 4)
         self._add_peak()    # initialize one peak input entry
 
         entryWidgets = QtWidgets.QWidget()
@@ -1255,11 +1263,55 @@ class FitParBox(QtWidgets.QGroupBox):
         entryArea.setWidget(entryWidgets)
 
         # Set up main layout
-        mainLayout = QtWidgets.QVBoxLayout()
+        mainLayout = QtWidgets.QGridLayout()
         mainLayout.setSpacing(0)
-        mainLayout.addWidget(entryArea)
+        mainLayout.addWidget(self.addPeakBtn, 0, 0, 1, 2)
+        mainLayout.addWidget(self.autoPeakBtn, 0, 3, 1, 2)
+        mainLayout.addWidget(self.x0FixCheck, 1, 0, 1, 1)
+        mainLayout.addWidget(self.x0Slider, 1, 1, 1, 4)
+        mainLayout.addWidget(self.aFixCheck, 2, 0, 1, 1)
+        mainLayout.addWidget(self.aSlider, 2, 1, 1, 4)
+        mainLayout.addWidget(self.sigmaFixCheck, 3, 0, 1, 1)
+        mainLayout.addWidget(self.sigmaSlider, 3, 1, 1, 4)
+        mainLayout.addWidget(self.gammaFixCheck, 4, 0, 1, 1)
+        mainLayout.addWidget(self.gammaSlider, 4, 1, 1, 4)
+        mainLayout.addWidget(entryArea, 5, 0, 1, 5)
         self.setLayout(mainLayout)
         self.setDisabled(True)
+
+    def _init_slider(self):
+
+        self.x0Slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.x0Slider.setMinimumHeight(15)
+        self.x0Slider.setTracking(True)
+        # adjust x0 range based on spectral window +/- 10
+        self.x0Slider.setRange(np.min(self.parent.dataX)-10,
+                               np.max(self.parent.dataX)+10)
+        self.x0Slider.setSingleStep(0.1)
+        self.x0Slider.setSliderPosition(np.average(self.parent.dataX))
+
+        self.aSlider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.aSlider.setMinimumHeight(15)
+        self.aSlider.setTracking(True)
+        self.aSlider.setRange(-10, 10)   # 1e-10 -- 1e10
+        self.aSlider.setSingleStep(0.1)
+        self.aSlider.setPageStep(1)
+        self.aSlider.setSliderPosition(0)
+
+        self.sigmaSlider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.sigmaSlider.setMinimumHeight(15)
+        self.sigmaSlider.setTracking(True)
+        self.sigmaSlider.setRange(0, 1)
+        self.sigmaSlider.setSingleStep(0.02)
+        self.sigmaSlider.setSliderPosition(0.1)
+
+        self.gammaSlider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.gammaSlider.setMinimumHeight(15)
+        self.gammaSlider.setTracking(True)
+        self.gammaSlider.setRange(0, 1)
+        self.gammaSlider.setSingleStep(0.02)
+        self.gammaSlider.setSliderPosition(0.5)
+
 
     def resetPeak(self):
         ''' Reset to default one peak '''
@@ -1309,11 +1361,11 @@ class FitParBox(QtWidgets.QGroupBox):
         n = len(self.parObjList)    # get current peak number
         parobj = FitParSet(self)
         self.parObjList.append(parobj)
-        self.entryLayout.addWidget(parobj.delBtn, n+2, 0)
-        self.entryLayout.addWidget(parobj.x0Input, n+2, 1)
-        self.entryLayout.addWidget(parobj.aInput, n+2, 2)
-        self.entryLayout.addWidget(parobj.sigmaInput, n+2, 3)
-        self.entryLayout.addWidget(parobj.gammaInput, n+2, 4)
+        self.entryLayout.addWidget(parobj.delBtn, n+1, 0)
+        self.entryLayout.addWidget(parobj.x0Input, n+1, 1)
+        self.entryLayout.addWidget(parobj.aInput, n+1, 2)
+        self.entryLayout.addWidget(parobj.sigmaInput, n+1, 3)
+        self.entryLayout.addWidget(parobj.gammaInput, n+1, 4)
         self.delBtnGroup.addButton(parobj.delBtn, n)
 
     def _del_peak(self, btn_id):
