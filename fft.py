@@ -83,8 +83,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # Set global window properties
         self.setWindowTitle('Chirped Pulse FFT')
         self.setMinimumWidth(800)
-        self.setMinimumHeight(600)
-        self.resize(QtCore.QSize(1200, 800))
+        self.setMinimumHeight(800)
+        self.resize(QtCore.QSize(1200, 850))
 
         # initiate component widgets
         self._init_menubar()
@@ -442,6 +442,7 @@ class InfoBox(QtWidgets.QGroupBox):
         self.pulseLenLabel = QtWidgets.QLabel()
         self.acqNLabel = QtWidgets.QLabel()
         self.acqTLabel = QtWidgets.QLabel()
+        self.acqAvgLabel = QtWidgets.QLabel()
         self.repRateLabel = QtWidgets.QLabel()
 
         thisLayout = QtWidgets.QGridLayout()
@@ -455,7 +456,8 @@ class InfoBox(QtWidgets.QGroupBox):
         thisLayout.addWidget(QtWidgets.QLabel('Pulse Length: '), 7, 0)
         thisLayout.addWidget(QtWidgets.QLabel('Acq Number: '), 8, 0)
         thisLayout.addWidget(QtWidgets.QLabel('Acq Time: '), 9, 0)
-        thisLayout.addWidget(QtWidgets.QLabel('Rep Rate: '), 10, 0)
+        thisLayout.addWidget(QtWidgets.QLabel('Averages: '), 10, 0)
+        thisLayout.addWidget(QtWidgets.QLabel('Rep Rate: '), 11, 0)
         thisLayout.addWidget(self.minFreqLabel, 1, 1)
         thisLayout.addWidget(self.maxFreqLabel, 2, 1)
         thisLayout.addWidget(self.detFreqLabel, 3, 1)
@@ -465,7 +467,8 @@ class InfoBox(QtWidgets.QGroupBox):
         thisLayout.addWidget(self.pulseLenLabel, 7, 1)
         thisLayout.addWidget(self.acqNLabel, 8, 1)
         thisLayout.addWidget(self.acqTLabel, 9, 1)
-        thisLayout.addWidget(self.repRateLabel, 10, 1)
+        thisLayout.addWidget(self.acqAvgLabel, 10, 1)
+        thisLayout.addWidget(self.repRateLabel, 11, 1)
         self.setLayout(thisLayout)
 
 
@@ -485,7 +488,8 @@ class InfoBox(QtWidgets.QGroupBox):
         self.pulseLenLabel.setText(pg.siFormat(self.parent.tdsData.pulseLen, precision=4, suffix='s'))
         self.acqNLabel.setText(str(self.parent.tdsData.acqN))
         self.acqTLabel.setText(pg.siFormat(self.parent.tdsData.acqT, precision=4, suffix='s'))
-        self.repRateLabel.setText('{:g}'.format(self.parent.tdsData.repRate))
+        self.acqAvgLabel.setText(str(self.parent.tdsData.acqAvg))
+        self.repRateLabel.setText('{:g} μs'.format(self.parent.tdsData.repRate))
 
 
 class FFTBox(QtWidgets.QGroupBox):
@@ -778,7 +782,8 @@ class TDSData():
                 self.detFreq: float   detection frequency f_det = f_max + f_im (MHz)
                 self.adcCLK: float    ADC clock frequency (Hz)
                 self.pulseLen: float  pulse time (* ADC clock cycles) (s)
-                self.acqN:  int       acquisition data points
+                self.acqAvg:  int     number of averages
+                self.acqN:  int       acquisition number of points
                 self.acqT:  float     acquisition time (s)
                 self.repRate: float   repetition rate
                 self.tdsSpec: n by 2 np.array   spectrum (xy) unit(s,V)
@@ -794,6 +799,7 @@ class TDSData():
         self.detFreq = 0
         self.adcCLK = 0
         self.pulseLen = 0
+        self.acqAvg = 0
         self.acqN = 0
         self.acqT = 0
         self.repRate = 0
@@ -825,8 +831,9 @@ class TDSData():
                 self.detFreq = self.maxFreq + self.imFreq
                 self.adcCLK = float(hd_array[3])
                 self.pulseLen = int(hd_array[4]) / self.adcCLK
-                self.acqN = int(hd_array[5])
-                self.acqT = self.acqN / self.adcCLK
+                self.acqAvg = int(hd_array[5])
+                self.acqT = float(hd_array[7]) * 1e-9
+                self.acqN = round(self.acqT * self.adcCLK)
                 self.repRate = float(hd_array[6])
                 # The last data point is 0 but leave it (for fft purpose)
                 x = np.arange(self.acqN + 1) / self.adcCLK
@@ -1284,9 +1291,6 @@ class FitParBox(QtWidgets.QGroupBox):
                 self._add_peak()
         else:
             pass
-        # modify the x0Input & a0Input values for all peaks
-        # again here one needs to differenciate the button id
-        # (which is the parObjList key) and loop index of peak_pos
         for i in range(n_peak):
             self.parObjList[i].x0Input.setText('{:.2f}'.format(peak_pos[i, 0]))
             self.parObjList[i].aInput.setText('{:g}'.format(peak_pos[i, 1]))
@@ -1331,10 +1335,6 @@ class FitParBox(QtWidgets.QGroupBox):
         '''
 
         p_dict = {}
-        # Don't change this particular way of loop because
-        # the button id is in general different from
-        # the parameter index, as multiple buttons can be
-        # removed before getting the parameter values.
         for i in range(len(self.parObjList)):
             obj = self.parObjList[i]
             p_dict['x0'+str(i)] = obj.getValue('x0')
