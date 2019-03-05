@@ -808,7 +808,7 @@ class TDSData():
     def load_file(self, filename):
         '''
             Reading the data file.
-            header : # 153292.10|30.00|30.00|1.00E+009|832|4096|30|4096
+            header : # 183292.10|30.00|30.00|1.00E+009|832|4096|30|4096
             Returns:
                 True  - load sucessfully
                 False - file not found / wrong format
@@ -1140,7 +1140,7 @@ class FitDiag(QtGui.QDialog):
         '''
 
         params = lmfit.Parameters()
-        for key, value in self.fitParBox.getValues().items():
+        for key, value in self.fitParBox.getAllValues().items():
             params.add(key, value)
         return params
 
@@ -1163,13 +1163,11 @@ class FitDiag(QtGui.QDialog):
     def loadSingle(self, filename):
         ''' Load single data file. Returns status '''
 
-        # clear plot
-        self.specCurve.clear()
-        self.fitCurve.clear()
-        self.residCurve.clear()
-        # reset peak
-        self.fitParBox.resetPeak()
         try:
+            # clear plot
+            self.specCurve.clear()
+            self.fitCurve.clear()
+            self.residCurve.clear()
             data = np.loadtxt(filename, skiprows=9)
             self.dataX = data[:, 0]
             self.dataY = data[:, 1]
@@ -1182,6 +1180,8 @@ class FitDiag(QtGui.QDialog):
             self.specCurve.setData(self.dataX*1e6, self.dataY)
             # enable par box
             self.fitParBox.setDisabled(False)
+            # reset peak
+            self.fitParBox.resetPeak()
             return True
         except:
             return False
@@ -1233,85 +1233,112 @@ class FitParBox(QtWidgets.QGroupBox):
         self.autoPeakBtn.clicked.connect(self.autoPeak)
         self.addPeakBtn = QtWidgets.QPushButton('Add Peak')
         self.addPeakBtn.clicked.connect(self._add_peak)
-        # Paramenter sliders
-        self._init_slider()
-        # Fix par checkboxes. Make this also the label of the variables.
-        self.x0FixCheck = QtWidgets.QCheckBox('Fix | Peak')
-        self.aFixCheck = QtWidgets.QCheckBox('Fix | A')
-        self.sigmaFixCheck = QtWidgets.QCheckBox('Fix | σ')
-        self.gammaFixCheck = QtWidgets.QCheckBox('Fix | γ')
-
-        self.parObjList = []   # FitParSet object list
-        # add all delete button to this group for tracking
+        # add all delete buttons & edit buttons to button group for tracking
         self.delBtnGroup = QtWidgets.QButtonGroup()
         self.delBtnGroup.buttonClicked[int].connect(self._del_peak)
+        self.editBtnGroup = QtWidgets.QButtonGroup()
+        self.editBtnGroup.buttonClicked[int].connect(self._edit_peak)
+        self.currentPeakId = 0  # track the current editing peak id
 
-        self.entryLayout = QtWidgets.QGridLayout()
-        self.entryLayout.setAlignment(QtCore.Qt.AlignTop | QtCore.Qt.AlignJustify)
-        self.entryLayout.addWidget(QtWidgets.QLabel('Fit pars'), 0, 0)
-        self.entryLayout.addWidget(QtWidgets.QLabel('Peak x0 (MHz)'), 0, 1)
-        self.entryLayout.addWidget(QtWidgets.QLabel('A'), 0, 2)
-        self.entryLayout.addWidget(QtWidgets.QLabel('σ'), 0, 3)
-        self.entryLayout.addWidget(QtWidgets.QLabel('γ'), 0, 4)
-        self._add_peak()    # initialize one peak input entry
+        # Paramenter sliders
+        self._init_par_slider()
+        self.parObjList = []   # FitParSet object list
 
-        entryWidgets = QtWidgets.QWidget()
-        entryWidgets.setLayout(self.entryLayout)
+        # display area for peaks and parameter values
+        self.parDispLayout = QtWidgets.QGridLayout()
+        self.parDispLayout.setAlignment(QtCore.Qt.AlignTop | QtCore.Qt.AlignJustify)
+        self.parDispLayout.addWidget(QtWidgets.QLabel('Fit pars'), 0, 0, 1, 2)
+        self.parDispLayout.addWidget(QtWidgets.QLabel('Peak x0 (MHz)'), 0, 2)
+        self.parDispLayout.addWidget(QtWidgets.QLabel('A'), 0, 3)
+        self.parDispLayout.addWidget(QtWidgets.QLabel('σ'), 0, 4)
+        self.parDispLayout.addWidget(QtWidgets.QLabel('γ'), 0, 5)
 
-        entryArea = QtWidgets.QScrollArea()
-        entryArea.setWidgetResizable(True)
-        entryArea.setWidget(entryWidgets)
+        parDispWidget = QtWidgets.QWidget()
+        parDispWidget.setLayout(self.parDispLayout)
+
+        parDispArea = QtWidgets.QScrollArea()
+        parDispArea.setWidgetResizable(True)
+        parDispArea.setWidget(parDispWidget)
+        parDispArea.setMinimumWidth(370)
 
         # Set up main layout
         mainLayout = QtWidgets.QGridLayout()
         mainLayout.setSpacing(0)
         mainLayout.addWidget(self.addPeakBtn, 0, 0, 1, 2)
-        mainLayout.addWidget(self.autoPeakBtn, 0, 3, 1, 2)
-        mainLayout.addWidget(self.x0FixCheck, 1, 0, 1, 1)
-        mainLayout.addWidget(self.x0Slider, 1, 1, 1, 4)
-        mainLayout.addWidget(self.aFixCheck, 2, 0, 1, 1)
-        mainLayout.addWidget(self.aSlider, 2, 1, 1, 4)
-        mainLayout.addWidget(self.sigmaFixCheck, 3, 0, 1, 1)
-        mainLayout.addWidget(self.sigmaSlider, 3, 1, 1, 4)
-        mainLayout.addWidget(self.gammaFixCheck, 4, 0, 1, 1)
-        mainLayout.addWidget(self.gammaSlider, 4, 1, 1, 4)
-        mainLayout.addWidget(entryArea, 5, 0, 1, 5)
+        mainLayout.addWidget(self.autoPeakBtn, 0, 2, 1, 2)
+        mainLayout.addWidget(self.parSlider, 1, 0, 1, 4)
+        mainLayout.addWidget(parDispArea, 2, 0, 1, 4)
         self.setLayout(mainLayout)
         self.setDisabled(True)
 
-    def _init_slider(self):
+    def _init_par_slider(self):
+        ''' Setup slider properties. The conversion from int slider position
+        to actual values see _update_#_val functions
+        '''
+
+        # Fix par checkboxes. Make this also the label of the variables.
+        self.x0FixCheck = QtWidgets.QCheckBox('Fix | Peak')
+        self.aFixCheck = QtWidgets.QCheckBox('Fix | A')
+        self.sigmaFixCheck = QtWidgets.QCheckBox('Fix | σ')
+        self.gammaFixCheck = QtWidgets.QCheckBox('Fix | γ')
+        self.x0FixCheck.setMaximumWidth(85)
+        self.aFixCheck.setMaximumWidth(85)
+        self.sigmaFixCheck.setMaximumWidth(85)
+        self.gammaFixCheck.setMaximumWidth(85)
 
         self.x0Slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
-        self.x0Slider.setMinimumHeight(15)
+        self.x0Slider.setMinimumHeight(18)
         self.x0Slider.setTracking(True)
-        # adjust x0 range based on spectral window +/- 10
-        self.x0Slider.setRange(np.min(self.parent.dataX)-10,
-                               np.max(self.parent.dataX)+10)
-        self.x0Slider.setSingleStep(0.1)
-        self.x0Slider.setSliderPosition(np.average(self.parent.dataX))
+        self.x0Slider.setRange(-100, 100)
+        self.x0Slider.setSingleStep(1)
+        self.x0Slider.setSliderPosition(0)
+        self.x0Slider.valueChanged[int].connect(self._update_x0Input)
 
-        self.aSlider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
-        self.aSlider.setMinimumHeight(15)
-        self.aSlider.setTracking(True)
-        self.aSlider.setRange(-10, 10)   # 1e-10 -- 1e10
-        self.aSlider.setSingleStep(0.1)
-        self.aSlider.setPageStep(1)
-        self.aSlider.setSliderPosition(0)
+        self.aMajorSlider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.aMajorSlider.setMinimumHeight(18)
+        self.aMajorSlider.setTracking(True)
+        self.aMajorSlider.setRange(-10, 9)   # 1e-10.0 -- 1e9.9
+        self.aMajorSlider.setSingleStep(1)
+        self.aMajorSlider.setSliderPosition(0)
+        self.aMajorSlider.valueChanged.connect(self._update_aInput)
+
+        self.aMinorSlider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.aMinorSlider.setMinimumHeight(18)
+        self.aMinorSlider.setTracking(True)
+        self.aMinorSlider.setRange(0, 9)   # digit 0-9
+        self.aMinorSlider.setSingleStep(1)
+        self.aMinorSlider.setSliderPosition(0)
+        self.aMinorSlider.valueChanged.connect(self._update_aInput)
 
         self.sigmaSlider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
-        self.sigmaSlider.setMinimumHeight(15)
+        self.sigmaSlider.setMinimumHeight(18)
         self.sigmaSlider.setTracking(True)
-        self.sigmaSlider.setRange(0, 1)
-        self.sigmaSlider.setSingleStep(0.02)
-        self.sigmaSlider.setSliderPosition(0.1)
+        self.sigmaSlider.setRange(0, 50)   # total range 0-5 MHz
+        self.sigmaSlider.setSingleStep(1)
+        self.sigmaSlider.setSliderPosition(10)
+        self.sigmaSlider.valueChanged[int].connect(self._update_sigmaInput)
 
         self.gammaSlider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
-        self.gammaSlider.setMinimumHeight(15)
+        self.gammaSlider.setMinimumHeight(18)
         self.gammaSlider.setTracking(True)
-        self.gammaSlider.setRange(0, 1)
-        self.gammaSlider.setSingleStep(0.02)
-        self.gammaSlider.setSliderPosition(0.5)
+        self.gammaSlider.setRange(0, 50)   # total range 0-5 MHz
+        self.gammaSlider.setSingleStep(1)
+        self.gammaSlider.setSliderPosition(50)
+        self.gammaSlider.valueChanged[int].connect(self._update_gammaInput)
 
+        self.parSlider = QtWidgets.QWidget()
+        thisLayout = QtWidgets.QGridLayout()
+        thisLayout.addWidget(self.x0FixCheck, 0, 0, 1, 1)
+        thisLayout.addWidget(self.x0Slider, 0, 1, 1, 3)
+        thisLayout.addWidget(self.aFixCheck, 1, 0, 1, 1)
+        thisLayout.addWidget(self.aMajorSlider, 1, 1, 1, 1)
+        thisLayout.addWidget(self.aMinorSlider, 1, 2, 1, 2)
+        thisLayout.addWidget(self.sigmaFixCheck, 2, 0, 1, 1)
+        thisLayout.addWidget(self.sigmaSlider, 2, 1, 1, 3)
+        thisLayout.addWidget(self.gammaFixCheck, 3, 0, 1, 1)
+        thisLayout.addWidget(self.gammaSlider, 3, 1, 1, 3)
+        self.parSlider.setLayout(thisLayout)
+        self.parSlider.setDisabled(True)    # disable par sliders @ 0 peaks
 
     def resetPeak(self):
         ''' Reset to default one peak '''
@@ -1355,32 +1382,7 @@ class FitParBox(QtWidgets.QGroupBox):
             self.parObjList[i].sigmaInput.setCursorPosition(0)
             self.parObjList[i].gammaInput.setCursorPosition(0)
 
-    def _add_peak(self):
-        ''' Manually add peak '''
-
-        n = len(self.parObjList)    # get current peak number
-        parobj = FitParSet(self)
-        self.parObjList.append(parobj)
-        self.entryLayout.addWidget(parobj.delBtn, n+1, 0)
-        self.entryLayout.addWidget(parobj.x0Input, n+1, 1)
-        self.entryLayout.addWidget(parobj.aInput, n+1, 2)
-        self.entryLayout.addWidget(parobj.sigmaInput, n+1, 3)
-        self.entryLayout.addWidget(parobj.gammaInput, n+1, 4)
-        self.delBtnGroup.addButton(parobj.delBtn, n)
-
-    def _del_peak(self, btn_id):
-        ''' Delete one peak from the peak list '''
-
-        obj = self.parObjList[btn_id]
-        self.delBtnGroup.removeButton(obj.delBtn)
-        del self.parObjList[btn_id]
-        obj.delSet()
-        # reset button ids > btn_id
-        # by doing so, btn_id is kept the same as list index
-        for obj in self.parObjList[btn_id:]:
-            self.delBtnGroup.setId(obj.delBtn, self.delBtnGroup.id(obj.delBtn) - 1)
-
-    def getValues(self):
+    def getAllValues(self):
         ''' Get parameter values from all parameter sets.
         Returns:
             p_dict: dictionary {'parname#': parvalue}
@@ -1395,6 +1397,153 @@ class FitParBox(QtWidgets.QGroupBox):
             p_dict['gamma'+str(i)] = obj.getValue('gamma')
         return p_dict
 
+    def getCurrentValues(self, obj_id):
+        ''' Get parameter values from the current parameter set obj.
+        Returns:
+            x0, a, sigma, gamma
+        '''
+        x0 = self.parObjList[obj_id].getValue('x0')
+        a = self.parObjList[obj_id].getValue('a')
+        sigma = self.parObjList[obj_id].getValue('sigma')
+        gamma = self.parObjList[obj_id].getValue('gamma')
+        return x0, a, sigma, gamma
+
+    def _add_peak(self):
+        ''' Manually add peak '''
+
+        n = len(self.parObjList)    # get current peak number
+        parobj = FitParSet(self)
+        self.parObjList.append(parobj)
+        self.parDispLayout.addWidget(parobj.delBtn, n+1, 0)
+        self.parDispLayout.addWidget(parobj.editBtn, n+1, 1)
+        self.parDispLayout.addWidget(parobj.x0Input, n+1, 2)
+        self.parDispLayout.addWidget(parobj.aInput, n+1, 3)
+        self.parDispLayout.addWidget(parobj.sigmaInput, n+1, 4)
+        self.parDispLayout.addWidget(parobj.gammaInput, n+1, 5)
+        self.delBtnGroup.addButton(parobj.delBtn, n)
+        self.editBtnGroup.addButton(parobj.editBtn, n)
+        # the order of the following codes shall not be swtiched because
+        # that will cause wrong currentPeakId tracking
+        # focus to the current peak
+        self._change_focus(n)
+        self._update_x0Input(0) # center of the spectral band
+        self._reset_slider(self.getCurrentValues(n))
+        # enable par slider if this is the first peak added (n=0)
+        if not n:
+            self.parSlider.setDisabled(False)
+        else:
+            pass
+
+    def _del_peak(self, btn_id):
+        ''' Delete one peak from the peak list '''
+
+        # If the button to be deleted is currently on focus,
+        # and it is not the last button, move button focus to the next one;
+        # if it is the last button, move button focus to the prev one
+        if btn_id == self.currentPeakId:
+            if btn_id == len(self.parObjList)-1:    # last button
+                self._edit_peak(btn_id - 1)
+            else:
+                self._edit_peak(btn_id + 1)
+        else:
+            pass
+        # get the peak par object
+        obj = self.parObjList[btn_id]
+        # remove buttons from button group
+        self.delBtnGroup.removeButton(obj.delBtn)
+        self.editBtnGroup.removeButton(obj.editBtn)
+        # delete it from the list & it's children widgets
+        del self.parObjList[btn_id]
+        obj.delSet()
+        obj.deleteLater()
+        # check if all buttons are deleted
+        if self.parObjList:
+            # reset button ids > btn_id
+            # by doing so, btn_id is kept the same as list index
+            for obj in self.parObjList[btn_id:]:
+                self.delBtnGroup.setId(obj.delBtn, self.delBtnGroup.id(obj.delBtn) - 1)
+                self.editBtnGroup.setId(obj.editBtn, self.editBtnGroup.id(obj.editBtn) - 1)
+            if self.currentPeakId > btn_id:
+                self.currentPeakId -= 1
+        else:
+            # disable par slider
+            self.parSlider.setDisabled(True)
+            self.currentPeakId = 0
+
+    def _edit_peak(self, btn_id):
+        ''' Get the current focused peak from the peak list, and update sliders.
+            Value adjustments are only allowed by dragging sliders.
+        '''
+        if btn_id == self.currentPeakId:
+            pass
+        else:
+            # change focus
+            self._change_focus(btn_id)
+            # get current par values & reset slider position
+            self._reset_slider(self.getCurrentValues(btn_id))
+
+    def _update_x0Input(self, val):
+        ''' Update x0 input value from slider position
+            x0 = pos / 200 * range(xdata) + mean(xdata)
+        '''
+        # get current parobj number
+        # calculate x0
+        x0 = val / 200 * np.ptp(self.parent.dataX) + np.median(self.parent.dataX)
+        self.parObjList[self.currentPeakId].x0Input.setText('{:.1f}'.format(x0))
+
+    def _update_aInput(self):
+        ''' Update a input value from slider position
+            a = 10^(major_pos + minor_pos*0.1)
+        '''
+        major_pos = self.aMajorSlider.sliderPosition()
+        minor_pos = self.aMinorSlider.sliderPosition()
+        a = np.power(10, major_pos + minor_pos*0.1)
+        self.parObjList[self.currentPeakId].aInput.setText('{:.1e}'.format(a))
+
+    def _update_sigmaInput(self, val):
+        ''' Update sigma input value from slider position
+            sigma = pos * 0.1
+        '''
+        self.parObjList[self.currentPeakId].sigmaInput.setText('{:.1f}'.format(val*0.1))
+
+    def _update_gammaInput(self, val):
+        ''' Update gamma slider value.
+            gamma = pos * 0.1
+        '''
+        self.parObjList[self.currentPeakId].gammaInput.setText('{:.1f}'.format(val*0.1))
+
+    def _change_focus(self, btn_id):
+        ''' change the background color to display the current focused peak '''
+
+        self.currentPeakId = btn_id
+        for i in range(len(self.parObjList)):
+            obj = self.parObjList[i]
+            if i == btn_id:
+                obj.x0Input.setStyleSheet('background-color: none')
+                obj.aInput.setStyleSheet('background-color: none')
+                obj.sigmaInput.setStyleSheet('background-color: none')
+                obj.gammaInput.setStyleSheet('background-color: none')
+            else:   # disable edit
+                obj.x0Input.setStyleSheet('background-color: #E0E0E0')
+                obj.aInput.setStyleSheet('background-color: #E0E0E0')
+                obj.sigmaInput.setStyleSheet('background-color: #E0E0E0')
+                obj.gammaInput.setStyleSheet('background-color: #E0E0E0')
+
+    def _reset_slider(self, *args):
+        ''' Reset slider position according to *args=(x0, a, sigma, gamma) '''
+
+        # calculate x0 position
+        a0, a1, a2, a3 = args[0]
+        x0pos = np.round((a0 - np.median(self.parent.dataX)) / np.ptp(self.parent.dataX) * 200)
+        self.x0Slider.setSliderPosition(x0pos)
+        # calculate a major and a minor (using string trick)
+        adb = '{:+.1f}'.format(np.log10(a1))
+        self.aMajorSlider.setSliderPosition(int(adb[:2]))
+        self.aMinorSlider.setSliderPosition(int(adb[3]))
+        # calculate sigma
+        self.sigmaSlider.setSliderPosition(round(a2*10))
+        # calculate gamma
+        self.gammaSlider.setSliderPosition(round(a3*10))
 
 class FitParSet(QtWidgets.QWidget):
     ''' Fit parameter set objects '''
@@ -1404,19 +1553,40 @@ class FitParSet(QtWidgets.QWidget):
         self.parent = parent
 
         self.delBtn = QtWidgets.QPushButton('Del')
+        self.editBtn = QtWidgets.QPushButton('Edit')
         self.x0Input = QtWidgets.QLineEdit()
         self.aInput = QtWidgets.QLineEdit()
         self.sigmaInput = QtWidgets.QLineEdit()
         self.gammaInput = QtWidgets.QLineEdit()
-        self.delBtn.setMaximumWidth(50)
-        self.x0Input.setMaximumWidth(120)
-        self.aInput.setMaximumWidth(60)
-        self.sigmaInput.setMaximumWidth(60)
-        self.gammaInput.setMaximumWidth(60)
+
+        # Value adjustments are only allowed by dragging sliders.
+        # Manual input is disabled throughout the program
+        self.x0Input.setReadOnly(True)
+        self.aInput.setReadOnly(True)
+        self.sigmaInput.setReadOnly(True)
+        self.gammaInput.setReadOnly(True)
+
+        self.delBtn.setMaximumWidth(45)
+        self.editBtn.setMaximumWidth(45)
+        self.x0Input.setMaximumWidth(90)
+        self.aInput.setMaximumWidth(90)
+        self.sigmaInput.setMaximumWidth(35)
+        self.gammaInput.setMaximumWidth(35)
+
+        self.x0Input.setAlignment(QtCore.Qt.AlignRight)
+        self.aInput.setAlignment(QtCore.Qt.AlignRight)
+        self.sigmaInput.setAlignment(QtCore.Qt.AlignRight)
+        self.gammaInput.setAlignment(QtCore.Qt.AlignRight)
+
         self.x0Input.setValidator(QtGui.QDoubleValidator())
         self.aInput.setValidator(QtGui.QDoubleValidator())
         self.sigmaInput.setValidator(QtGui.QDoubleValidator())
         self.gammaInput.setValidator(QtGui.QDoubleValidator())
+
+        # set default values (except for x0)
+        self.aInput.setText('{:.1e}'.format(1))
+        self.sigmaInput.setText('0.1')
+        self.gammaInput.setText('0.5')
 
     def delSet(self):
 
@@ -1429,6 +1599,7 @@ class FitParSet(QtWidgets.QWidget):
         self.sigmaInput.deleteLater()
         self.gammaInput.deleteLater()
         self.delBtn.deleteLater()
+        self.editBtn.deleteLater()
 
     def getValue(self, parname):
         ''' Return parameter values for the given parname '''
