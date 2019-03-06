@@ -1084,7 +1084,7 @@ class FitDiag(QtGui.QDialog):
         self.specCurve.setPen(color='FFB62F', width=1.5)
         self.fitCurve = pg.PlotCurveItem()
         p1.addItem(self.fitCurve)
-        self.fitCurve.setPen(color='6EBABA', width=1.5)
+        self.fitCurve.setPen(color='a8d5d5', width=1.5)
         self.residCurve = p2.plot()
         self.residCurve.setPen(color='FFB62F', width=1.5)
 
@@ -1127,12 +1127,24 @@ class FitDiag(QtGui.QDialog):
             # plot fit
             self.fitResY = self.dataY + self.fitRes.residual
             self.fitCurve.setData(self.dataX*1e6, self.fitResY)
+            # change to fitted color: salmon
+            self.fitCurve.setPen(color='e64a57', width=1.5)
         except ValueError:
             if depress:
                 pass
             else:
-                d = QtWidgets.QMessageBox(QtGui.QMessageBox.Warning, 'Fit fails', 'Please update your initial guess.')
+                d = QtWidgets.QMessageBox(QtGui.QMessageBox.Warning, 'Fit fails', 'Fit fails. Please try new initial guesses.')
                 d.exec_()
+
+    def plotInit(self):
+        ''' plot curve using initial guesses '''
+
+        params = self._getParams()
+        # initY = model - 0
+        initY = f2min(params, self.dataX, np.zeros_like(self.dataX))
+        self.fitCurve.setData(self.dataX*1e6, initY)
+        # change to initial guess color: lake blue
+        self.fitCurve.setPen(color='a8d5d5', width=1.5)
 
     def _getParams(self):
         ''' Get initial guesses of parameters from user input.
@@ -1291,6 +1303,7 @@ class FitParBox(QtWidgets.QGroupBox):
         self.x0Slider.setTracking(True)
         self.x0Slider.setRange(-100, 100)
         self.x0Slider.setSingleStep(1)
+        self.x0Slider.setPageStep(1)
         self.x0Slider.setSliderPosition(0)
         self.x0Slider.valueChanged[int].connect(self._update_x0Input)
 
@@ -1299,6 +1312,7 @@ class FitParBox(QtWidgets.QGroupBox):
         self.aMajorSlider.setTracking(True)
         self.aMajorSlider.setRange(-10, 9)   # 1e-10.0 -- 1e9.9
         self.aMajorSlider.setSingleStep(1)
+        self.aMajorSlider.setPageStep(1)
         self.aMajorSlider.setSliderPosition(0)
         self.aMajorSlider.valueChanged.connect(self._update_aInput)
 
@@ -1307,6 +1321,7 @@ class FitParBox(QtWidgets.QGroupBox):
         self.aMinorSlider.setTracking(True)
         self.aMinorSlider.setRange(0, 9)   # digit 0-9
         self.aMinorSlider.setSingleStep(1)
+        self.aMinorSlider.setPageStep(1)
         self.aMinorSlider.setSliderPosition(0)
         self.aMinorSlider.valueChanged.connect(self._update_aInput)
 
@@ -1315,6 +1330,7 @@ class FitParBox(QtWidgets.QGroupBox):
         self.sigmaSlider.setTracking(True)
         self.sigmaSlider.setRange(0, 50)   # total range 0-5 MHz
         self.sigmaSlider.setSingleStep(1)
+        self.sigmaSlider.setPageStep(1)
         self.sigmaSlider.setSliderPosition(10)
         self.sigmaSlider.valueChanged[int].connect(self._update_sigmaInput)
 
@@ -1323,6 +1339,7 @@ class FitParBox(QtWidgets.QGroupBox):
         self.gammaSlider.setTracking(True)
         self.gammaSlider.setRange(0, 50)   # total range 0-5 MHz
         self.gammaSlider.setSingleStep(1)
+        self.gammaSlider.setPageStep(1)
         self.gammaSlider.setSliderPosition(50)
         self.gammaSlider.valueChanged[int].connect(self._update_gammaInput)
 
@@ -1486,10 +1503,11 @@ class FitParBox(QtWidgets.QGroupBox):
         ''' Update x0 input value from slider position
             x0 = pos / 200 * range(xdata) + mean(xdata)
         '''
-        # get current parobj number
         # calculate x0
         x0 = val / 200 * np.ptp(self.parent.dataX) + np.median(self.parent.dataX)
         self.parObjList[self.currentPeakId].x0Input.setText('{:.1f}'.format(x0))
+        # replot initial guess
+        self.parent.plotInit()
 
     def _update_aInput(self):
         ''' Update a input value from slider position
@@ -1499,18 +1517,24 @@ class FitParBox(QtWidgets.QGroupBox):
         minor_pos = self.aMinorSlider.sliderPosition()
         a = np.power(10, major_pos + minor_pos*0.1)
         self.parObjList[self.currentPeakId].aInput.setText('{:.1e}'.format(a))
+        # replot initial guess
+        self.parent.plotInit()
 
     def _update_sigmaInput(self, val):
         ''' Update sigma input value from slider position
             sigma = pos * 0.1
         '''
         self.parObjList[self.currentPeakId].sigmaInput.setText('{:.1f}'.format(val*0.1))
+        # replot initial guess
+        self.parent.plotInit()
 
     def _update_gammaInput(self, val):
         ''' Update gamma slider value.
             gamma = pos * 0.1
         '''
         self.parObjList[self.currentPeakId].gammaInput.setText('{:.1f}'.format(val*0.1))
+        # replot initial guess
+        self.parent.plotInit()
 
     def _change_focus(self, btn_id):
         ''' change the background color to display the current focused peak '''
