@@ -1393,11 +1393,7 @@ class FitParBox(QtWidgets.QGroupBox):
             # estimate line width
             self.parObjList[i].sigmaInput.setText('0.1')
             self.parObjList[i].gammaInput.setText('0.5')
-            # reset cursor
-            self.parObjList[i].x0Input.setCursorPosition(0)
-            self.parObjList[i].aInput.setCursorPosition(0)
-            self.parObjList[i].sigmaInput.setCursorPosition(0)
-            self.parObjList[i].gammaInput.setCursorPosition(0)
+        self.parent.plotInit()
 
     def getAllValues(self):
         ''' Get parameter values from all parameter sets.
@@ -1521,18 +1517,22 @@ class FitParBox(QtWidgets.QGroupBox):
         self.parent.plotInit()
 
     def _update_sigmaInput(self, val):
-        ''' Update sigma input value from slider position
+        ''' Update sigma input value from slider position.
+            This applies to all par objects
             sigma = pos * 0.1
         '''
-        self.parObjList[self.currentPeakId].sigmaInput.setText('{:.1f}'.format(val*0.1))
+        for obj in self.parObjList:
+            obj.sigmaInput.setText('{:.1f}'.format(val*0.1))
         # replot initial guess
         self.parent.plotInit()
 
     def _update_gammaInput(self, val):
-        ''' Update gamma slider value.
+        ''' Update gamma input value from slider position.
+            This applies to all par objects
             gamma = pos * 0.1
         '''
-        self.parObjList[self.currentPeakId].gammaInput.setText('{:.1f}'.format(val*0.1))
+        for obj in self.parObjList:
+            obj.gammaInput.setText('{:.1f}'.format(val*0.1))
         # replot initial guess
         self.parent.plotInit()
 
