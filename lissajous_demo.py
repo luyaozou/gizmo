@@ -1,6 +1,6 @@
 #! encoding = utf-8
 
-''' Demostrate lissajour curve '''
+''' Demostrate lissajous curve '''
 
 import sys
 import numpy as np
@@ -17,7 +17,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def __init__(self, parent=None):
         QtWidgets.QMainWindow.__init__(self)
         self.setStyleSheet('font-size: 12pt; font-family: default')
-        self.setWindowTitle('Lissajour Curve Demo')
+        self.setWindowTitle('Lissajous Curve Demo')
 
         self.canvasBox = CanvasBox(self)
         self.parBox = ParBox(self)
@@ -119,7 +119,7 @@ class CanvasBox(QtWidgets.QWidget):
         # set global pg options
         pg.setConfigOption('leftButtonPan', False)
 
-        canvas1 = pg.PlotWidget(title='Lissajour Curve')
+        canvas1 = pg.PlotWidget()
         canvas1.showGrid(x=True, y=True)
         canvas1.setLabel('left')
         canvas1.setLabel('right')
