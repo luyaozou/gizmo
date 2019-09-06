@@ -34,7 +34,7 @@ if __name__ == '__main__':
     else:
         a = 1.5
 
-    cat = np.loadtxt(args.file[0], delimiter=',')
+    cat = np.loadtxt(args.file[0], delimiter=',', usecols=(0,1,2,3,4))
     if args.fmin[0]:
         fmin = args.fmin[0] * 1e3
     else:
