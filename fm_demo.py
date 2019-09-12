@@ -32,7 +32,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setMinimumHeight(800)
         self.resize(QtCore.QSize(1500, 900))
         sGeo = QtWidgets.QDesktopWidget().screenGeometry()
-        self.move((sGeo.width()-1500)//2, (sGeo.height()-800)//2)
+        self.move((sGeo.width()-1500)//2, (sGeo.height()-900)//2)
 
         self.canvasBox = CanvasBox(self)
         self.parBox = ParBox(self)
@@ -57,9 +57,11 @@ class ParBox(QtWidgets.QGroupBox):
         self.mod_x_array = np.linspace(-10, 10, 201)
         self.mod_x_mat = np.zeros(0)
         self.mod_y_mat = np.zeros(0)
+        self.seed = 0
 
         labelVoigtDG = QtWidgets.QLabel('Voigt lineshape: Gaussian width')
         labelVoigtDL = QtWidgets.QLabel('Voigt lineshape: Lorentzian width')
+        labelNoise = QtWidgets.QLabel('Noise level')
         labelModFreq = QtWidgets.QLabel('Modulation frequency')
         labelModDev = QtWidgets.QLabel('Modulation deviation (detuning)')
         labelModDepth = QtWidgets.QLabel('Modulatioon depth (amplitude)')
@@ -75,6 +77,12 @@ class ParBox(QtWidgets.QGroupBox):
         self.dlInput.setDecimals(1)
         self.dlInput.setSingleStep(0.1)
         self.dlInput.setValue(0)
+
+        self.noiseInput = QtWidgets.QDoubleSpinBox()
+        self.noiseInput.setRange(0, 0.5)
+        self.noiseInput.setDecimals(2)
+        self.noiseInput.setSingleStep(0.01)
+        self.noiseInput.setValue(0)
 
         self.modFreqInput = QtWidgets.QDoubleSpinBox()
         self.modFreqInput.setRange(0, 500)
@@ -100,6 +108,8 @@ class ParBox(QtWidgets.QGroupBox):
         thisLayout.addWidget(self.dgInput, 0, 1)
         thisLayout.addWidget(labelVoigtDL, 0, 2)
         thisLayout.addWidget(self.dlInput, 0, 3)
+        thisLayout.addWidget(labelNoise, 0, 4)
+        thisLayout.addWidget(self.noiseInput, 0, 5)
         thisLayout.addWidget(labelModFreq, 1, 0)
         thisLayout.addWidget(self.modFreqInput, 1, 1)
         thisLayout.addWidget(labelModDepth, 1, 2)
@@ -110,6 +120,7 @@ class ParBox(QtWidgets.QGroupBox):
 
         self.dgInput.valueChanged.connect(self.calc_line)
         self.dlInput.valueChanged.connect(self.calc_line)
+        self.noiseInput.valueChanged.connect(self.calc_line)
         self.modFreqInput.valueChanged.connect(self.calc_fm_spec)
         self.modDepthInput.valueChanged.connect(self.calc_fm_spec)
         self.modDevInput.valueChanged.connect(self.calc_mod)
@@ -122,7 +133,10 @@ class ParBox(QtWidgets.QGroupBox):
 
         dg = self.dgInput.value()
         dl = self.dlInput.value()
-        ly = voigt1(self.lx, dg, dl)
+        noise = self.noiseInput.value()
+        self.seed = int(np.abs(np.random.rand())*2**32)
+        np.random.RandomState(seed=self.seed)
+        ly = voigt1(self.lx, dg, dl) + np.random.normal(loc=0, scale=noise, size=len(self.lx))
         self.parent.canvasBox.plot_input(self.lx, ly)
         self.calc_fm_spec()
 
@@ -130,6 +144,7 @@ class ParBox(QtWidgets.QGroupBox):
 
         mod_freq = self.modFreqInput.value()
         mod_depth = self.modDepthInput.value()
+        noise = self.noiseInput.value()
         dg = self.dgInput.value()
         dl = self.dlInput.value()
 
@@ -138,14 +153,16 @@ class ParBox(QtWidgets.QGroupBox):
         lc = len(self.mod_x_array)  # length of column
         self.mod_x_mat = np.repeat(mod_x, lc).reshape((lr, lc)) \
                     + np.repeat(self.mod_x_array, lr).reshape((lc, lr)).transpose()
-        self.mod_y_mat = np.apply_along_axis(voigt1, 1, self.mod_x_mat, dg, dl)
-        fft_y_mat = np.apply_along_axis(np.fft.rfft, 0, self.mod_y_mat)
+        np.random.RandomState(seed=self.seed)
+        self.mod_y_mat = np.apply_along_axis(voigt1, 1, self.mod_x_mat, dg, dl)\
+                         + np.random.normal(loc=0, scale=noise, size=(lr, lc))
+        self.fft_y_mat = np.apply_along_axis(np.fft.rfft, 0, self.mod_y_mat)
         # find the 1st, 2nd and 3rd harmonics
         idx_1f = int(mod_freq / 10)
-        y0c = fft_y_mat[0, :]             # complex
-        y1c = fft_y_mat[idx_1f, :]        # complex
-        y2c = fft_y_mat[idx_1f*2, :]      # complex
-        y3c = fft_y_mat[idx_1f*3, :]      # complex
+        y0c = self.fft_y_mat[0, :]             # complex
+        y1c = self.fft_y_mat[idx_1f, :]        # complex
+        y2c = self.fft_y_mat[idx_1f*2, :]      # complex
+        y3c = self.fft_y_mat[idx_1f*3, :]      # complex
         # get the absolute value square but keep the sign
         y0 = np.real(y0c)*np.abs(np.real(y0c)) + np.imag(y0c)*np.abs(np.imag(y0c))
         y1 = np.real(y1c)*np.abs(np.real(y1c)) + np.imag(y1c)*np.abs(np.imag(y1c))
@@ -168,11 +185,13 @@ class ParBox(QtWidgets.QGroupBox):
         idx = np.argwhere(np.logical_and(self.mod_x_array<mod_dev+tol, self.mod_x_array>mod_dev-tol))[0,0]
         mod_x = self.mod_x_mat[:, idx]
         mod_y = self.mod_y_mat[:, idx]
+        fft_y = self.fft_y_mat[:, idx]
+        x = np.fft.rfftfreq(len(mod_y)) * 1e4
         #mod_x = mod_depth * np.sin(2*np.pi*mod_freq*self.t*0.01) + mod_dev
         #mod_y = voigt1(mod_x, dg, dl)
         self.parent.canvasBox.plot_mod(self.t[0:300], mod_x[0:300])
         self.parent.canvasBox.plot_output(self.t, mod_y)
-        self.parent.canvasBox.plot_fft(mod_y, 0.01)
+        self.parent.canvasBox.plot_fft(x, fft_y)
 
 
 class CanvasBox(QtWidgets.QWidget):
@@ -227,9 +246,12 @@ class CanvasBox(QtWidgets.QWidget):
         self.curveFFTre.setPen(color='ffb62f', width=1)
         self.curveFFTim = pg.PlotCurveItem(name='imag')
         self.curveFFTim.setPen(color='32afde', width=1)
+        self.curveFFTamp = pg.PlotCurveItem(name='amp')
+        self.curveFFTamp.setPen(color='e0e0e0', width=1)
         canvasFFT.addItem(self.curveFFTim)
+        canvasFFT.addItem(self.curveFFTamp)
 
-        canvasFM = pg.PlotWidget(title='FM spectrum')
+        canvasFM = pg.PlotWidget(title='FM spectrum (Opposite phase)')
         canvasFM.showGrid(x=True, y=True)
         canvasFM.setLabel('left')
         canvasFM.setLabel('right')
@@ -273,11 +295,11 @@ class CanvasBox(QtWidgets.QWidget):
     def plot_output(self, x, y):
         self.curveOutput.setData(x, y)
 
-    def plot_fft(self, y, fscale):
-        x = np.fft.rfftfreq(len(y)) / fscale * 100
-        y = np.fft.rfft(y)
+    def plot_fft(self, x, y):
+
         self.curveFFTre.setData(x, np.real(y))
         self.curveFFTim.setData(x, np.imag(y))
+        self.curveFFTamp.setData(x, np.absolute(y))
 
     def plot_mod(self, t, mod_x):
         ''' Plot modulation sine wave on top of the line (rotate 90 deg) '''
