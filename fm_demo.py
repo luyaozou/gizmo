@@ -7,6 +7,7 @@ import numpy as np
 from PyQt5 import QtWidgets, QtGui, QtCore
 import pyqtgraph as pg
 from scipy.special import wofz
+from scipy.signal import square
 
 def voigt1(x, sigma, gamma):
     '''
@@ -65,6 +66,7 @@ class ParBox(QtWidgets.QGroupBox):
         labelModFreq = QtWidgets.QLabel('Modulation frequency')
         labelModDev = QtWidgets.QLabel('Modulation deviation (detuning)')
         labelModDepth = QtWidgets.QLabel('Modulatioon depth (amplitude)')
+        labelWaveform = QtWidgets.QLabel('Modulation Waveform')
 
         self.dgInput = QtWidgets.QDoubleSpinBox()
         self.dgInput.setRange(0.1, 5)
@@ -102,6 +104,9 @@ class ParBox(QtWidgets.QGroupBox):
         self.modDepthInput.setSingleStep(0.1)
         self.modDepthInput.setValue(1)
 
+        self.comboWaveform = QtWidgets.QComboBox()
+        self.comboWaveform.addItems(['Sine', 'Square'])
+
         thisLayout = QtWidgets.QGridLayout()
         thisLayout.setAlignment(QtCore.Qt.AlignTop)
         thisLayout.addWidget(labelVoigtDG, 0, 0)
@@ -116,6 +121,8 @@ class ParBox(QtWidgets.QGroupBox):
         thisLayout.addWidget(self.modDepthInput, 1, 3)
         thisLayout.addWidget(labelModDev, 1, 4)
         thisLayout.addWidget(self.modDevInput, 1, 5)
+        thisLayout.addWidget(labelWaveform, 2, 0)
+        thisLayout.addWidget(self.comboWaveform, 2, 1)
         self.setLayout(thisLayout)
 
         self.dgInput.valueChanged.connect(self.calc_line)
@@ -124,6 +131,7 @@ class ParBox(QtWidgets.QGroupBox):
         self.modFreqInput.valueChanged.connect(self.calc_fm_spec)
         self.modDepthInput.valueChanged.connect(self.calc_fm_spec)
         self.modDevInput.valueChanged.connect(self.calc_mod)
+        self.comboWaveform.currentIndexChanged.connect(self.calc_fm_spec)
 
         self.calc_line()
         self.calc_mod()
@@ -147,8 +155,15 @@ class ParBox(QtWidgets.QGroupBox):
         noise = self.noiseInput.value()
         dg = self.dgInput.value()
         dl = self.dlInput.value()
+        wf = self.comboWaveform.currentText()
 
-        mod_x = mod_depth * np.sin(2*np.pi*mod_freq*self.t*0.01)
+        if wf == 'Sine':
+            mod_x = mod_depth * np.sin(2*np.pi*mod_freq*self.t*0.01)
+        elif wf == 'Square':
+            mod_x = square(2*np.pi*mod_freq*self.t*0.01) * mod_depth
+        else:
+            mod_x = np.ones(len(self.t))
+
         lr = len(mod_x)             # length of row
         lc = len(self.mod_x_array)  # length of column
         self.mod_x_mat = np.repeat(mod_x, lc).reshape((lr, lc)) \
