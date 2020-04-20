@@ -98,11 +98,13 @@ def scan_num(hd_line_n, num_str):
         return hd_line_n       # extract all scans
 
 
-def parse(file_name, num_str, hd_bool):
+def parse(file_name, num_str, hd_bool, delm='  ', out=''):
     ''' Parse file. Input arguments:
     file_name:  .lwa file name, str
     num_str:    controlling string for scan numbers, str
     hd_bool:    header control, boolean
+    delm: str   delimiter
+    out: str    output name prefix
 
     Returns None. Directly outputs parsed file.
     '''
@@ -131,7 +133,17 @@ def parse(file_name, num_str, hd_bool):
             data = data_parser(lines[n+3:line_next])
         else:
             data = data_parser(lines[n+3:])
-        outname = outnamefmt(file_name, hd_info, hd_line_n.index(n))
+
+        if out:
+            if delm == ',':
+                outname = out[0] + '.csv'
+            else:
+                if hd_bool:
+                    outname = out[0] + '.dat'
+                else:
+                    outname = out[0] + '.txt'
+        else:
+            outname = outnamefmt(file_name, hd_info, hd_line_n.index(n))
 
         # control the header line in the output file
         if hd_bool:
@@ -139,8 +151,8 @@ def parse(file_name, num_str, hd_bool):
         else:
             hd = ''
 
-        np.savetxt(outname, np.column_stack((freq, data)), delimiter=',',
-                   header=hd, fmt='%.3f')
+        np.savetxt(outname, np.column_stack((freq, data)), delimiter=delm,
+                   header=hd, fmt=['%.6f', '%.3f'])
         print('{:s} saved'.format(outname))
 
     return None
@@ -168,6 +180,8 @@ def arg():
                         numbers delimited by comma''')
     parser.add_argument('-header', action='store_true', help='''Insert header
                         information in the output csv file''')
+    parser.add_argument('-delm', nargs=1, help='Delimiter. [space] / comma')
+    parser.add_argument('-o', nargs=1, help='Output file name')
     args = parser.parse_args()
 
     return args
@@ -184,7 +198,12 @@ if __name__ == '__main__':
     else:
         num_str = ''
 
+    if args.delm:
+        delm = args.delm[0]
+    else:
+        delm = '  '
+
     for file_name in file_list:
         print('{:->20}'.format('-'))
-        parse(file_name, num_str, args.header)
+        parse(file_name, num_str, args.header, delm=delm, out=args.o)
         print('{:s} parsed'.format(file_name))
