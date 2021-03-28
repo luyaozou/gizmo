@@ -47,8 +47,22 @@ def dihedral(q1, q2, q3, q4):
 
     n123 = np.cross(v12, v23)
     n234 = np.cross(v23, v34)
+    direc = n123 - n234
+    if direc[2] == 0:
+        if direc[1] == 0:
+            if direc[0] == 0:
+                raise ValueError('cannot have two zero vectors as normal')
+            else:
+                sign = direc[0] > 0
+        else:
+            sign = direc[1] > 0
+    else:
+        sign = direc[2] > 0
 
-    return angle(n123, n234)
+    if sign:
+        return angle(n123, n234)
+    else:
+        return 360 - angle(n123, n234)
 
 
 def process(filename):
@@ -82,7 +96,7 @@ def process(filename):
                 q1 = q_list[current_idx]
                 q2 = q_list[idx-1]
                 r = bondlen(q1, q2)
-                print(atom, idx, '{:.6f}'.format(r))
+                print(atom, idx, '{:.8f}'.format(r))
             elif len(a_list) == 3:
                 idx2 = int(a_list[1])
                 idx3 = int(a_list[2])
@@ -91,7 +105,7 @@ def process(filename):
                 q3 = q_list[idx3-1]
                 r = bondlen(q1, q2)
                 ang = bondang(q1, q2, q3)
-                print(atom, idx2, '{:.6f}'.format(r), idx3, '{:8.3f}'.format(ang))
+                print(atom, idx2, '{:.8f}'.format(r), idx3, '{:12.8f}'.format(ang))
             elif len(a_list) == 4:
                 idx2 = int(a_list[1])
                 idx3 = int(a_list[2])
@@ -103,7 +117,7 @@ def process(filename):
                 r = bondlen(q1, q2)
                 ang = bondang(q1, q2, q3)
                 dih = dihedral(q1, q2, q3, q4)
-                print(atom, idx2, '{:.6f}'.format(r), idx3, '{:8.3f}'.format(ang), idx4, '{:8.3f}'.format(dih))
+                print(atom, idx2, '{:.8f}'.format(r), idx3, '{:12.8f}'.format(ang), idx4, '{:12.8f}'.format(dih))
             current_idx += 1
 
 
