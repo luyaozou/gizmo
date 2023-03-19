@@ -44,6 +44,10 @@ MASS = {
 }
 
 
+ABC2XYZ_Ir = np.array([1, 2, 0], dtype='int16')      # (x, y, z) -> (b, c, a)    # z = a axis, apply the index on ABC vector to get XYZ vector
+ABC2XYZ_IIIr = np.array([0, 1, 2], dtype='int16')    # (x, y, z) -> (a, b, c)    # z = c axis, apply the index on ABC vector to get XYZ vector
+
+
 def arg():
     """ Argutnem parser """
 
@@ -109,18 +113,24 @@ def readfile(filename):
     return xyz_list, internal_rotor_list
 
 
-def calc_inertia_mat(xyz_list):
+def calc_inertia_tensor(xyz_list):
+    """ The inertia tensor needs to be calculated from the center of mass """
+    com = sum(np.array([q[0] * q[1], q[0] * q[2], q[0] * q[3]]) for q in xyz_list) \
+            / sum(q[0] for q in xyz_list)
+    qcom_list = list(
+        (q[0], q[1] - com[0], q[2] - com[1], q[3] - com[2]) for q in xyz_list
+    )
     mat = np.array(
             [
-                [sum(q[0] * (q[2]**2 + q[3]**2) for q in xyz_list),
-                 - sum(q[0] * q[1] * q[2] for q in xyz_list),
-                 - sum(q[0] * q[1] * q[3] for q in xyz_list)],
-                [- sum(q[0] * q[1] * q[2] for q in xyz_list),
-                 sum(q[0] * (q[1]**2 + q[3]**2) for q in xyz_list),
-                 - sum(q[0] * q[2] * q[3] for q in xyz_list)],
-                [- sum(q[0] * q[1] * q[3] for q in xyz_list),
-                 - sum(q[0] * q[2] * q[3] for q in xyz_list),
-                 sum(q[0] * (q[1]**2 + q[2]**2) for q in xyz_list)],
+                [sum(q[0] * (q[2]**2 + q[3]**2) for q in qcom_list),
+                 - sum(q[0] * q[1] * q[2] for q in qcom_list),
+                 - sum(q[0] * q[1] * q[3] for q in qcom_list)],
+                [- sum(q[0] * q[1] * q[2] for q in qcom_list),
+                 sum(q[0] * (q[1]**2 + q[3]**2) for q in qcom_list),
+                 - sum(q[0] * q[2] * q[3] for q in qcom_list)],
+                [- sum(q[0] * q[1] * q[3] for q in qcom_list),
+                 - sum(q[0] * q[2] * q[3] for q in qcom_list),
+                 sum(q[0] * (q[1]**2 + q[2]**2) for q in qcom_list)],
             ])
     return mat
 
@@ -155,102 +165,139 @@ def calc(xyz_list, rotor_list, rep):
         sum(q[0] * q[2] for q in xyz_list) / mass_sum,
         sum(q[0] * q[3] for q in xyz_list) / mass_sum,
     )
-    inertia_mat = calc_inertia_mat(xyz_list)
-    eig_val, eig_vec = np.linalg.eig(inertia_mat)
-    abc = 6.62607004 * 6.02214086 / (8 * np.pi**2 * eig_val) * 1e3
-    idx = np.argsort(abc)
+    inertia_tensor = calc_inertia_tensor(xyz_list)
+    eig_val, eig_vec = np.linalg.eig(inertia_tensor)
+    abc_ghz = 6.62607004 * 6.02214086 / (8 * np.pi**2 * eig_val) * 1e3
+    idx = np.argsort(eig_val)
+    i_abc = eig_val[idx]
+    abc_ghz = abc_ghz[idx]
+    abc_cm = abc_ghz / 29.9792458
+    # the column v[:,i] is the eigenvector corresponding to the eigenvalue w[i].
     pa = eig_vec[:, idx]
-    a_axis = pa[:, 0]
-    b_axis = pa[:, 1]
-    c_axis = pa[:, 2]
-
-    i_aa = np.dot(a_axis, np.dot(inertia_mat, a_axis))
-    i_ab = np.dot(a_axis, np.dot(inertia_mat, b_axis))
-    i_ac = np.dot(a_axis, np.dot(inertia_mat, c_axis))
-    i_bb = np.dot(b_axis, np.dot(inertia_mat, b_axis))
-    i_bc = np.dot(b_axis, np.dot(inertia_mat, c_axis))
-    i_cc = np.dot(c_axis, np.dot(inertia_mat, c_axis))
-    inertia_mat_abc = np.array([[i_aa, i_ab, i_ac], [i_ab, i_bb, i_bc], [i_ac, i_bc, i_cc]])
+    # now we need to tweak the sign of the principle axes.
+    # the eigen vector solver will return randomly + or - sign,
+    # but by convention we let the largest component in each eigen vector to be positive
+    for i in range(3):
+        max_elem = pa[np.argmax(abs(pa[:, i])), i]
+        if max_elem > 0:
+            pass
+        else:
+            pa[:, i] = -pa[:, i]
 
     if rep == 1:
         rep_str = 'Ir'
-        bx = abc[1]
-        by = abc[2]
-        bz = abc[0]
+        b = abc_ghz[ABC2XYZ_Ir]
     elif rep == 3:
         rep_str = 'IIIr'
-        bx = abc[0]
-        by = abc[1]
-        bz = abc[2]
+        b = abc_ghz[ABC2XYZ_IIIr]
     else:
         print('Unknown representation')
         exit(1)
-    bj = (bx + by) / 2
-    bk = bz - bj
-    b_ = (bx - by) / 2
+    bj = (b[0] + b[1]) / 2
+    bk = b[2] - bj
+    b_ = (b[0] - b[1]) / 2
 
-    print('*' * 20, ' bulk molecule ', '*'*20, end='\n\n')
+    print('*' * 20, ' whole molecule ', '*'*20, end='\n\n')
     print(' Moments of inertia tensor (amu*AA^2) ', end='\n\n')
-    print(inertia_mat, end='\n\n')
+    print(inertia_tensor, end='\n\n')
     print(' Principal axis direction ', end='\n\n')
     print(pa, end='\n\n')
-    print(' Rotational constants (GHz) {:s}'.format(rep_str), end='\n\n')
-    print(abc, end='\n\n')
-    print(' BJ = {:.6f}'.format(bj))
-    print(' BK = {:.6f}'.format(bk))
-    print(' B- = {:.6f}'.format(b_))
+    print(' Rotational constants (GHz / cm-1) {:s}'.format(rep_str), end='\n\n')
+    print(' A  = {:>10.6f} {:>12.9f}'.format(abc_ghz[0], abc_cm[0]))
+    print(' B  = {:>10.6f} {:>12.9f}'.format(abc_ghz[1], abc_cm[1]))
+    print(' C  = {:>10.6f} {:>12.9f}'.format(abc_ghz[2], abc_cm[2]))
+    print()
+    print(' BJ = {:>10.6f} {:>12.9f}'.format(bj, bj / 29.9792458))
+    print(' BK = {:>10.6f} {:>12.9f}'.format(bk, bk / 29.9792458))
+    print(' B- = {:>10.6f} {:>12.9f}'.format(b_, b_ / 29.9792458))
 
     # now calculate internal rotor parameters
     for rotor in rotor_list:
         axis, top = rotor
         rotor_xyz = list(mol_xyz[i - 1] for i in top)
         rotor_axis = np.array(mol_xyz[axis[1]-1][1:]) - np.array(mol_xyz[axis[0]-1][1:])
-        calc_rhof(rotor_xyz, rotor_axis, eig_val, pa, inertia_mat_abc, rep)
+        calc_rhof(rotor_xyz, rotor_axis, pa, i_abc, abc_ghz, rep)
 
 
-def calc_rhof(xyz, rotor_axis, mol_eig, mol_pa, mat_abc, rep):
-
-    rotor_mat = calc_inertia_mat(xyz)
-    rotor_eig, rotor_vec = np.linalg.eig(rotor_mat)
+def calc_rhof(xyz, rotor_axis, mol_pa, i_abc, abc_ghz, rep):
+    """ Calculate internal rotor parameters
+    :arguments
+        xyz:            cartesian of internal rotor atoms
+        rotor_axis:     axis that the user points out as the rotor axis (use to find true rotor axis)
+        mol_pa:         principal axis (ABC) of the whole molecule
+        i_abc:          moment of inertia of the whole molecule, ABC axis
+        abc_ghz:        rotational constants (GHz) of the whole molecule, ABC axis
+    """
+    rotor_inertia_tensor = calc_inertia_tensor(xyz)
+    rotor_eig, rotor_vec = np.linalg.eig(rotor_inertia_tensor)
     # find the true top axis, which is the eigen vector closest to the specified rotor_axis
     # compute the product of rotor_axis with the eigen vector, the component closest to 1 is the true rotor axis
-    _p = abs(np.dot(rotor_axis, rotor_vec)) / np.linalg.norm(rotor_axis)
-    idx = np.argmin(np.abs(_p - 1))
-    axis = rotor_vec[:, idx]
-
-    if abs(rotor_eig[0] - rotor_eig[1]) > abs(rotor_eig[1] - rotor_eig[2]):
-        i_alpha = rotor_eig[0]
-    else:
-        i_alpha = rotor_eig[-1]
+    _p = np.dot(rotor_axis, rotor_vec) / np.linalg.norm(rotor_axis)
+    idx = np.argmin(1 - abs(_p))
+    # match the direction of the true_axis with the rotor_axis that the input specifies
+    true_axis = rotor_vec[:, idx] if _p[idx] > 0 else -rotor_vec[:, idx]
+    i_alpha = rotor_eig[idx]
+    # don't know why I have this weird condition here. Does not make sense
+    # if abs(rotor_eig[0] - rotor_eig[1]) > abs(rotor_eig[1] - rotor_eig[2]):
+    #     i_alpha = rotor_eig[0]
+    # else:
+    #     i_alpha = rotor_eig[-1]
     if rep == 1:
-        lambda_x = dircos(axis, mol_pa[:, 1])
-        lambda_y = dircos(axis, mol_pa[:, 2])
-        lambda_z = dircos(axis, mol_pa[:, 0])
-        r_ = 1 - lambda_y**2 * i_alpha / mol_eig[2] - lambda_z**2 * i_alpha / mol_eig[0]
-        d = r_ * mol_eig[0] * mol_eig[2]
-        delta = np.arccos(abs(lambda_y))
-        epsilon = np.arccos(lambda_x * np.sign(lambda_z) / np.sqrt(lambda_x**2 + lambda_z**2))
+        i_xyz = i_abc[ABC2XYZ_Ir]
+        lambda_x = dircos(true_axis, mol_pa[:, 1])
+        lambda_y = dircos(true_axis, mol_pa[:, 2])
+        lambda_z = dircos(true_axis, mol_pa[:, 0])
     else:
-        lambda_x = dircos(axis, mol_pa[:, 0])
-        lambda_y = dircos(axis, mol_pa[:, 1])
-        lambda_z = dircos(axis, mol_pa[:, 2])
-        r_ = 1 - lambda_y**2 * i_alpha / mol_eig[1] - lambda_z**2 * i_alpha / mol_eig[2]
-        d = r_ * mol_eig[1] * mol_eig[2]
-        delta = np.arccos(abs(lambda_z))
-        epsilon = np.arccos(lambda_x * np.sign(lambda_y) / np.sqrt(lambda_x**2 + lambda_y**2))
+        i_xyz = i_abc[ABC2XYZ_IIIr]
+        lambda_x = dircos(true_axis, mol_pa[:, 0])
+        lambda_y = dircos(true_axis, mol_pa[:, 1])
+        lambda_z = dircos(true_axis, mol_pa[:, 2])
+    lambda_xyz = np.array([lambda_x, lambda_y, lambda_z])
+    r_ = 1 - sum(lambda_xyz[i]**2 * i_alpha / i_xyz[i] for i in range(3))
+    d_ = r_ * i_xyz[1] * i_xyz[2]
     f = 6.62607004 * 6.02214086 / (8 * np.pi**2 * r_ * i_alpha) * 1e3
     f0 = 505.379 / i_alpha
-    rho = np.sqrt(mat_abc[1, 1]**2 + mat_abc[1, 2]**2) * i_alpha / (
-            mat_abc[1, 1] * mat_abc[2, 2] - mat_abc[1, 2]**2)
+    delta = np.arccos(lambda_z)
+    epsilon = np.arcsin(lambda_y / np.sqrt(lambda_x ** 2 + lambda_y ** 2))
+    # rho = sqrt(Ibb^2 + Ibc^2) * Ia / (Ibb * Icc - Ibc^2)  (from Lin & Swalen 1959)
+    # rho = np.sqrt(i_tensor_abs[1, 1] ** 2 + i_tensor_abs[1, 2] ** 2) * i_alpha / (
+    #         i_tensor_abs[1, 1] * i_tensor_abs[2, 2] - i_tensor_abs[1, 2] ** 2)
+    rho_xyz = lambda_xyz / i_xyz * i_alpha
+    theta = np.arctan(rho_xyz[0] / rho_xyz[2])
+    gamma = np.arccos(rho_xyz[0] / np.sqrt(rho_xyz[0]**2 + rho_xyz[1]**2))
+    beta = np.arccos(rho_xyz[2] / np.linalg.norm(rho_xyz))
+    dxy = f * rho_xyz[0] * rho_xyz[1]  # DAB, DBC, DAC
+    dxz = f * rho_xyz[0] * rho_xyz[2]  # DAB, DBC, DAC
+    dyz = f * rho_xyz[1] * rho_xyz[1]  # DAB, DBC, DAC
+    q_vec = - 2 * f * rho_xyz
+    if rep == 1:
+        dab = dxz
+        dbc = dxy
+        dac = dyz
+    else:
+        dab = dxy
+        dbc = dyz
+        dac = dxz
+
     print()
     print('*' * 20, ' internal rotor ', '*' * 20, end='\n\n')
     print(' I_alpha (amu*AA^2): {:.6f}'.format(i_alpha))
-    print(' rotor axis: ', axis)
-    print(' rho       : {:.9f}'.format(rho))
-    print(' F (GHz)   : {:.6f}'.format(f))
-    print(' F0 (GHz)  : {:.6f}'.format(f0))
-    print(' epsilon (rad / deg): {:.6f} {:7.3f}'.format(epsilon, epsilon * 180 / np.pi))
-    print(' delta   (rad / deg): {:.6f} {:7.3f}'.format(delta, delta * 180 / np.pi))
+    print(' rotor axis: ', true_axis)
+    print(' rho vector: ', rho_xyz)
+    print(' |rho|     :  {:.9f}'.format(np.linalg.norm(rho_xyz)))
+    print(' DAB (GHz / cm-1) : {:>10.6f} {:>12.9f}'.format(dab, dab / 29.9792458))
+    print(' DBC (GHz / cm-1) : {:>10.6f} {:>12.9f}'.format(dbc, dbc / 29.9792458))
+    print(' DAC (GHz / cm-1) : {:>10.6f} {:>12.9f}'.format(dac, dac / 29.9792458))
+    print(' F   (GHz / cm-1) : {:>10.6f} {:>12.9f}'.format(f, f / 29.9792458))
+    print(' F0  (GHz / cm-1) : {:>10.6f} {:>12.9f}'.format(f0, f0 / 29.9792458))
+    print(' Qx  (GHz / cm-1) : {:>10.6f} {:>12.9f}'.format(q_vec[0], q_vec[0] / 29.9792458))
+    print(' Qy  (GHz / cm-1) : {:>10.6f} {:>12.9f}'.format(q_vec[1], q_vec[1] / 29.9792458))
+    print(' Qz  (GHz / cm-1) : {:>10.6f} {:>12.9f}'.format(q_vec[2], q_vec[2] / 29.9792458))
+    print(' theta   (rad / deg) : {:>9.6f} {:>7.3f}'.format(theta, theta * 180 / np.pi))
+    print(' beta    (rad / deg) : {:>9.6f} {:>7.3f}'.format(beta, beta * 180 / np.pi))
+    print(' gamma   (rad / deg) : {:>9.6f} {:>7.3f}'.format(gamma, gamma * 180 / np.pi))
+    print(' epsilon (rad / deg) : {:>9.6f} {:>7.3f}'.format(epsilon, epsilon * 180 / np.pi))
+    print(' delta   (rad / deg) : {:>9.6f} {:>7.3f}'.format(delta, delta * 180 / np.pi))
     print(' delta (deg) <internal rotor axis, principal axis> ')
     print('   x: {:.3f}    y: {:.3f}   z: {:.3f}'.format(
             np.arccos(abs(lambda_x)) * 180 / np.pi,
