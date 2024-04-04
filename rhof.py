@@ -33,15 +33,26 @@ import argparse
 
 # atomic mass dictionary
 MASS = {
-    'H': 1,
-    'D': 2,
-    'C': 12,
-    'N': 14,
-    'O': 16,
-    'F': 19,
-    'P': 31,
-    'S': 32,
+    'H': 1.007825031898,
+    'H-1': 1.007825031898,
+    'D-2': 2.014101777844,
+    'He-4': 4.00260325413,
+    'Li-6': 6.01512288742,
+    'Li-7': 7.01600343426,
+
+    'C': 12.000,
+    'N': 14.00307400425,
+    'O': 15.99491461926,
+    'F': 18.99840316207,
+    'P': 30.97376199768,
+    'S': 31.97207117354,
 }
+
+MAIN_ISOTOPE = {
+    'H': 1,
+    'He': 4,
+}
+
 
 
 ABC2XYZ_Ir = np.array([1, 2, 0], dtype='int16')      # (x, y, z) -> (b, c, a)    # z = a axis, apply the index on ABC vector to get XYZ vector
@@ -265,6 +276,10 @@ def calc_rhof(xyz, rotor_axis, mol_pa, i_abc, abc_ghz, rep):
     rho_xyz = lambda_xyz / i_xyz * i_alpha
     theta = np.arctan(rho_xyz[0] / rho_xyz[2])
     gamma = np.arccos(rho_xyz[0] / np.sqrt(rho_xyz[0]**2 + rho_xyz[1]**2))
+    n_ab = np.cross(mol_pa[:,0], mol_pa[:,1])  # normal vector of the principal axis ab plane
+    # alpha: RHO axis angle of RHO axis w.r.t. "ab" principal plane (ERHAM angle)
+    alpha = np.arcsin(np.dot(rho_xyz, n_ab) / (np.linalg.norm(rho_xyz) * np.linalg.norm(n_ab)))
+    # beta: RHO axis polar angle between RHO axis and "a" principal axis (ERHAM angle)
     beta = np.arccos(rho_xyz[2] / np.linalg.norm(rho_xyz))
     dxy = f * rho_xyz[0] * rho_xyz[1]  # DAB, DBC, DAC
     dxz = f * rho_xyz[0] * rho_xyz[2]  # DAB, DBC, DAC
@@ -295,6 +310,7 @@ def calc_rhof(xyz, rotor_axis, mol_pa, i_abc, abc_ghz, rep):
     print(' Qz  (GHz / cm-1) : {:>10.6f} {:>12.9f}'.format(q_vec[2], q_vec[2] / 29.9792458))
     print(' theta   (rad / deg) : {:>9.6f} {:>7.3f}'.format(theta, theta * 180 / np.pi))
     print(' beta    (rad / deg) : {:>9.6f} {:>7.3f}'.format(beta, beta * 180 / np.pi))
+    print(' alpha   (rad / deg) : {:>9.6f} {:>7.3f}'.format(alpha, alpha * 180 / np.pi))
     print(' gamma   (rad / deg) : {:>9.6f} {:>7.3f}'.format(gamma, gamma * 180 / np.pi))
     print(' epsilon (rad / deg) : {:>9.6f} {:>7.3f}'.format(epsilon, epsilon * 180 / np.pi))
     print(' delta   (rad / deg) : {:>9.6f} {:>7.3f}'.format(delta, delta * 180 / np.pi))
