@@ -107,6 +107,9 @@ def readfile(filename):
                         try:
                             mass = int(a_list[0])
                         except ValueError:
+                            if a_list[0] == 'X':
+                                # skip dummy atom
+                                continue
                             mass = MASS[a_list[0]]
                         q = [mass, ] + list(float(x) for x in a_list[1:])
                         xyz_list.append(np.array(q))
