@@ -29,8 +29,12 @@ def parse(inp, out, field):
             if search_start:
                 if a_line.startswith(' ! '):
                     a_list = a_line.split()
-                    if a_list[1] == field and a_list[4] == '-DE/DX':
-                        value = a_list[3]
+                    # depending on the scan options, '-DE/DX' is not necessarily at a_list[4]
+                    # we need to find the correct column that labels the 'value'
+                    if a_list[1] == 'Name':
+                        i_value = a_list.index('Value')
+                    if a_list[1] == field:
+                        value = a_list[i_value]
                         search_start = False
                         record_list.append((value, energy))
         for value, energy in record_list:
