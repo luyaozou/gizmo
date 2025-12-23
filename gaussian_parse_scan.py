@@ -9,15 +9,19 @@ def arg():
     parser.add_argument('inp', nargs=1, help='input filename')
     parser.add_argument('-out', nargs=1, default='parse.out', help='output filename')
     parser.add_argument('-field', nargs=1, help='Coordinate that is scanned')
+    parser.add_argument('-a', action='store_true', help='Append to data')
     args = parser.parse_args()
 
     return args
 
 
-def parse(inp, out, field):
+def parse(inp, out, field, w_mode):
 
-    with open(inp, 'r') as fi, open(out, 'w') as fo:
-        fo.write('{:^10s} {:^16s}\n'.format(field, 'SCF'))
+    with open(inp, 'r') as fi, open(out, w_mode) as fo:
+        if w_mode == 'w':
+            fo.write('{:^10s} {:^16s}\n'.format(field, 'SCF'))
+        else:   # if w_mode =='a', do not write header
+            pass
         record_list = []
         search_start = False
         for a_line in fi:
@@ -44,4 +48,8 @@ def parse(inp, out, field):
 if __name__ == '__main__':
     
     args = arg()
-    parse(args.inp[0], args.out[0], args.field[0])
+    if args.a:
+        w_mode = 'a'
+    else:
+        w_mode = 'w'
+    parse(args.inp[0], args.out[0], args.field[0], w_mode)
